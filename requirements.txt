@@ -1,0 +1,3 @@
+anthropic>=0.40.0
+youtube-transcript-api>=0.6   # optional: YouTube transcripts
+cryptography>=42.0        # update signature check

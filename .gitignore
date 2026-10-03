@@ -1,0 +1,12 @@
+.env
+.env.*
+*.db
+*.db-*
+.venv/
+__pycache__/
+.pytest_cache/
+workspace/
+backups/
+dist/
+.brain_state.json
+.iris_state.json
