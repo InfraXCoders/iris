@@ -25,15 +25,23 @@ Everything here is free: no accounts, no servers, no paid APIs. All data stays o
   and movement.
 - **Share.** A PDF report, and JSON export/import that the Android app can read.
 
-## Get started (on your Mac)
+## Requirements
 
-You need Xcode (App Store). XcodeGen is installed automatically with Homebrew.
+- A Mac with **Xcode** (free from the App Store). Open it once after installing so it can finish setup.
+- An **Apple ID** (a free one is fine) to install on an iPhone.
+- iPhone with **iOS 17** or later, or a Mac with **macOS 14** or later.
+- XcodeGen is installed automatically with [Homebrew](https://brew.sh) the first time you run `test.command`.
+
+## Get started
+
+Open Terminal in the project folder (in Finder: right-click the folder → **New Terminal at Folder**), then:
 
 ```bash
-cd ~/Desktop/Project-Websites/iris
 bash test.command      # builds and tests everything; should end with "ALL PASS"
 bash run_mac.command   # opens the Mac app
 ```
+
+If `test.command` fails, the last lines it prints say why; the full logs are in the `logs/` folder.
 
 ### iPhone Simulator
 
@@ -55,7 +63,55 @@ The Simulator has no camera, so the viewfinder shows a message there; everything
 
 With a free Apple ID the app stops opening after 7 days. Just press ▶ in Xcode again; your recces are kept.
 
-If Xcode says the bundle ID is not available, add `BUNDLE_ID_PREFIX = com.yourname` to `Config/Local.xcconfig`.
+If Xcode says the bundle ID is not available (common when a second person builds it), add a line
+`BUNDLE_ID_PREFIX = com.yourname` to `Config/Local.xcconfig` and press ▶ again.
+
+## Testing
+
+### What to check
+
+| Area | Try this | Expected |
+|---|---|---|
+| Viewfinder | Quick recce → point at something → change focal length and aspect | Frame lines resize; the phone zooms to fit the frame |
+| Reference photo | Capture in the viewfinder, then open the shot | Photo saved with the frame lines drawn on it |
+| Recce | New recce → **Use my location** → add a scene and shots | Location saved; Sun card shows sunrise, sunset, golden and blue hour |
+| Voice note | Add a note, dictate in English, Hindi or Hinglish, edit, save | Text appears with Composition / Lighting / Movement tags |
+| Lens database | Databases & tools → Lens database → use the filters | Lenses filter by maker, squeeze, format, mount; badges show coverage |
+| Camera database | Open a camera | Recording modes with sensor sizes |
+| Coverage tool | ALEXA 35 + Master Anamorphic 50mm → switch recording modes | Open gate: corners vignette; 4K 16:9 and 6:5: covers |
+| Recording mode | On a shot, pick a camera with modes, change **Recording mode** | Viewfinder frame changes with the crop |
+| Share | Recce → Create PDF report, Export JSON | PDF opens with one page per shot; JSON can be imported again |
+| Mac | `bash run_mac.command` | Same app on the Mac; set the webcam angle with the gear button in the viewfinder |
+
+### Reporting a problem
+
+Send: what you tapped, what you expected, what happened, the device and iOS/macOS version, and a screenshot.
+For a build problem, send the last lines `test.command` printed (or the matching file in `logs/`).
+
+### Sharing a test build (for the project owner)
+
+A tester needs a Mac with Xcode; there is no free way to send an iPhone app to someone remote
+(that needs the paid Apple Developer Program and TestFlight).
+
+Make a clean zip of the project (source only: no build files, no Team ID):
+
+```bash
+git add -A && git commit -m "Version for testing"
+git archive --format=zip -o ~/Desktop/BMPCC-Control-iOS.zip HEAD
+```
+
+Send `BMPCC-Control-iOS.zip`. The tester unzips it and follows **Get started** and **Your iPhone** above.
+(Don't send the original `BMPCC-Control.zip`: that is the Android app's source.)
+
+Mac-only testers can also get the built app:
+
+```bash
+bash run_mac.command
+cd .build/DerivedData/Build/Products/Debug && zip -r ~/Desktop/BMPCC-Control-Mac.zip BMPCCControl.app
+```
+
+It isn't notarised, so the first time the tester right-clicks the app → **Open** → **Open**
+(or allows it in **System Settings → Privacy & Security → Open Anyway**).
 
 ### Mac camera field of view
 
@@ -69,7 +125,8 @@ set it to the angle of the lens on that camera.
 |---|---|
 | `RecceKit/` | All the maths and data formats (optics, framing, sun, note sorting, Android JSON), with tests checked against the Android app's own code. No UI; runs anywhere Swift runs. |
 | `BMPCCControl/` | The SwiftUI app, one code base for iPhone, iPad and Mac. |
-| `BMPCCControlTests/` | App tests: saving, JSON import/export, PDF report. |
+| `BMPCCControlTests/` | App tests: saving, JSON import/export, recording modes, PDF report. |
+| `*.command` | `test` (build + test everything), `run_mac`, `open_xcode`, `set_team` (Apple ID for iPhone installs). |
 | `project.yml` | The Xcode project definition (XcodeGen). The `.xcodeproj` is generated, not committed. |
 | `DATABASE.md` | Where the lens and camera data come from, how to edit it, known gaps. |
 | `PORTING_NOTES.md` | What changed from the Android app and why, including bugs found. |
