@@ -1,0 +1,7 @@
+// Copy this file to Local.xcconfig (same folder) and put in your Team ID.
+// Find it in Xcode: Settings > Accounts > your Apple ID > the team > "Team ID",
+// or after signing in, any project's Signing & Capabilities tab shows it.
+// A free Apple ID works (apps then expire after 7 days; just run again from Xcode).
+DEVELOPMENT_TEAM = ABCDE12345
+// Bundle IDs must be unique per team. If Xcode says the ID is taken, change this:
+// BUNDLE_ID_PREFIX = com.yourname

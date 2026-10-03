@@ -1,88 +1,75 @@
-# iris
+# BMPCC Control (iPhone + Mac)
 
-**One task in, a tested iPhone + Mac app out.** iris is a team of AI agents that research, design, code, build, test and fix a SwiftUI app until its tests pass, then remember what worked.
+A location-recce app for filmmakers shooting on Blackmagic Pocket Cinema cameras, ported from the Android
+app *BMPCC Control*. This first version is **Recce mode**. Camera control over Bluetooth comes later.
 
-```
-Task ─► Orchestrator ─► Research (parallel) ─► Architect ─► scaffold (no AI) ─► Coding + Testing
-                                                                                     │
-        ┌──────────── FAIL ◄── Build + Test (Xcode: iPhone simulator, then Mac) ◄─────┘
-        ▼
-   Debug + Research ─► fix ─► retest ... ─► PASS ─► save verified knowledge + reusable skill
-```
+Everything here is free: no accounts, no servers, no paid APIs. All data stays on your device.
 
-## Set up your Mac (5 steps)
+## What it does
 
-1. **Install Xcode** from the App Store. Open it once, accept the licence, and let it install the iOS simulator.
-2. **Install Python 3.10+** from [python.org](https://www.python.org/downloads/macos/) (the built-in macOS Python is too old) and **Homebrew** from [brew.sh](https://brew.sh).
-3. **Get an Anthropic API key** at [console.anthropic.com](https://console.anthropic.com). Set a **monthly spend limit** there first.
-4. In Terminal, in this folder, run:
-   ```
-   bash setup.command
-   ```
-   This installs packages and XcodeGen, stores your API key in the **macOS Keychain** (never in a file), and runs a check.
-5. Prove the Xcode pipeline works, with **no AI and no cost**:
-   ```
-   bash doctor.command
-   ```
-   It builds and tests a tiny app on the iPhone simulator and on your Mac. You want to see `ios=PASS  macos=PASS`.
+- **Director's viewfinder.** Point your iPhone (or the Mac's camera) and see the exact frame your cinema camera
+  and lens will capture: frame lines, aspect masks (2.39, 1.85, 16:9…), anamorphic desqueeze, thirds, safe
+  areas and horizon. The phone zooms itself so the frame fits. You can capture reference photos with the frame
+  lines saved, and drop markers for subject, camera, key light and so on.
+- **Recces → scenes → shots.** Shot type, movement, camera, lens, focal length, T-stop, aspect, frame rate,
+  shutter, ISO, ND, white balance, camera height and distance, plus notes.
+- **Camera & lens library.** 13 cameras and 12 lenses (the same list as the Android app), with field-of-view
+  tables, lens/sensor coverage checks, favourites and defaults for new shots.
+- **Sun.** Sunrise, sunset, solar noon, golden hour and blue hour for the recce's location and date, and where
+  the sun is now.
+- **Voice notes** in English, Hindi or Hinglish, turned into text and auto-sorted into composition, lighting
+  and movement.
+- **Share.** A PDF report, and JSON export/import that the Android app can read.
 
-Then start iris:
+## Get started (on your Mac)
 
-```
-bash start.command          # opens http://localhost:8765
-bash start_cli.command      # or the text version
+You need Xcode (App Store). XcodeGen is installed automatically with Homebrew.
+
+```bash
+cd ~/Desktop/Project-Websites/iris
+bash test.command      # builds and tests everything; should end with "ALL PASS"
+bash run_mac.command   # opens the Mac app
 ```
 
-> **Tip:** run the scripts with `bash …` the first time. Double-clicking a downloaded `.command` file triggers a macOS security warning.
+### iPhone Simulator
 
-## What you get
-
-Each run creates a project folder in **`~/iris-workspace/<name>-<time>/`**:
-
+```bash
+bash open_xcode.command
 ```
-ARCHITECTURE.md      the plan
-apple/project.yml    XcodeGen spec (iris generates the .xcodeproj from it)
-apple/Shared/        SwiftUI code for iPhone AND Mac
-apple/iOS/, macOS/   platform-only code
-apple/Tests/         XCTest unit tests (run on both)
-skills/              the reusable skill, saved when everything passed
-```
+At the top of Xcode choose the scheme **BMPCCControl-iOS** and any iPhone simulator, then press ▶.
+The Simulator has no camera, so the viewfinder shows a message there; everything else works.
 
-To open it in Xcode: `cd ~/iris-workspace/<project>/apple && xcodegen generate && open *.xcodeproj`.
+### Your iPhone
 
-**Run it on your iPhone:** in Xcode, pick the `<Name>-iOS` scheme, select your iPhone, and under *Signing & Capabilities* choose your Apple ID team. A free Apple ID works, but the app must be re-installed every 7 days. TestFlight and the App Store need the paid Apple Developer Program.
+1. In Xcode: **Settings → Accounts → +**, sign in with your Apple ID (a free one is fine).
+2. `bash set_team.command` saves your Team ID to `Config/Local.xcconfig` (that file is not uploaded to GitHub).
+3. Connect the iPhone with a cable, unlock it and tap **Trust**.
+   On the iPhone turn on **Settings → Privacy & Security → Developer Mode** (it restarts).
+4. `bash open_xcode.command`, choose **BMPCCControl-iOS** and your iPhone at the top, press ▶.
+5. First time only: on the iPhone go to **Settings → General → VPN & Device Management**, tap your Apple ID and
+   **Trust**.
 
-## Where things live
+With a free Apple ID the app stops opening after 7 days. Just press ▶ in Xcode again; your recces are kept.
 
-| What | Where |
+If Xcode says the bundle ID is not available, add `BUNDLE_ID_PREFIX = com.yourname` to `Config/Local.xcconfig`.
+
+### Mac camera field of view
+
+iPhones report their camera's field of view, so frame lines are exact. Mac webcams don't, so the Mac
+viewfinder has a **Camera field of view** setting (gear button). For a Blackmagic camera's USB-C webcam output,
+set it to the angle of the lens on that camera.
+
+## Project layout
+
+| Folder | What it is |
 |---|---|
-| iris code | this folder |
-| Settings (no secrets) | `.env` in this folder |
-| API keys | macOS Keychain, service `iris` |
-| Memory + state | `~/Library/Application Support/iris/` |
-| Generated apps | `~/iris-workspace/` |
+| `RecceKit/` | All the maths and data formats (optics, framing, sun, note sorting, Android JSON), with tests checked against the Android app's own code. No UI; runs anywhere Swift runs. |
+| `BMPCCControl/` | The SwiftUI app, one code base for iPhone, iPad and Mac. |
+| `BMPCCControlTests/` | App tests: saving, JSON import/export, PDF report. |
+| `project.yml` | The Xcode project definition (XcodeGen). The `.xcodeproj` is generated, not committed. |
+| `PORTING_NOTES.md` | What changed from the Android app and why, including bugs found. |
 
-## Settings (`.env`)
+## Privacy
 
-| Setting | Default | Meaning |
-|---|---|---|
-| `BRAIN_TOKEN_BUDGET` | 2000000 | Stop a run before it spends more tokens than this |
-| `BRAIN_MODEL` | newest Sonnet | Pin a model, e.g. `claude-sonnet-5-5` |
-| `AUTO_UPDATE` | `check` | `auto`, `check` or `off` |
-| `AUTO_MODEL_FAMILY` | `sonnet` | `sonnet`, `haiku` (cheaper) or `opus` (strongest) |
-| `IRIS_WORKSPACE` | `~/iris-workspace` | Where generated apps go |
-| `IRIS_IOS_DESTINATION` | newest iPhone simulator | e.g. `platform=iOS Simulator,name=iPhone 16` |
-| `BRAIN_BACKEND` | `claude` | `openrouter`, `omniroute` or `airllm` (optional, off by default) |
-
-Optional keys (GitHub, YouTube, OpenRouter) also go in the Keychain:
-`security add-generic-password -U -s iris -a GITHUB_TOKEN -w`
-
-## For developers
-
-```
-pip install -r requirements-dev.txt
-python selftest.py          # fast sanity check (also run before every update)
-python -m pytest            # full test suite, including attack tests
-```
-
-Android is still supported (`--platforms android`) but is off by default. See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).
+Camera, microphone, speech recognition and location are used only when you tap the feature that needs them.
+Speech recognition runs on the device where the language supports it. Nothing is uploaded.

@@ -1,0 +1,623 @@
+{
+"events": [
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"tz": "Asia/Kolkata",
+"date": "2026-06-21",
+"sunrise": 1781999646.984633,
+"sunset": 1782049906.077412,
+"noon": 1782024772.0,
+"goldenMorningStart": 1781998635.636266,
+"goldenMorningEnd": 1782001661.356508,
+"goldenEveningStart": 1782047891.700187,
+"goldenEveningEnd": 1782050930.642341,
+"blueEveningStart": 1782050930.642341,
+"blueEveningEnd": 1782051554.784738
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"tz": "Asia/Kolkata",
+"date": "2026-12-21",
+"sunrise": 1797817183.003585,
+"sunset": 1797854312.773195,
+"noon": 1797835739.0,
+"goldenMorningStart": 1797816185.114967,
+"goldenMorningEnd": 1797819254.530559,
+"goldenEveningStart": 1797852241.239234,
+"goldenEveningEnd": 1797855310.665364,
+"blueEveningStart": 1797855310.665364,
+"blueEveningEnd": 1797855901.069472
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"tz": "Asia/Kolkata",
+"date": "2026-03-20",
+"sunrise": 1773968137.813999,
+"sunset": 1774011727.345129,
+"noon": 1773989924.0,
+"goldenMorningStart": 1773967237.957717,
+"goldenMorningEnd": 1773969955.561638,
+"goldenEveningStart": 1774009907.596232,
+"goldenEveningEnd": 1774012628.356913,
+"blueEveningStart": 1774012628.356913,
+"blueEveningEnd": 1774013168.429646
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"tz": "Asia/Kolkata",
+"date": "2026-10-03",
+"sunrise": 1790988315.397712,
+"sunset": 1791030891.609674,
+"noon": 1791009621.0,
+"goldenMorningStart": 1790987413.317148,
+"goldenMorningEnd": 1790990144.067186,
+"goldenEveningStart": 1791029064.420273,
+"goldenEveningEnd": 1791031792.833191,
+"blueEveningStart": 1791031792.833191,
+"blueEveningEnd": 1791032331.936581
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"tz": "Asia/Kolkata",
+"date": "2026-07-15",
+"sunrise": 1784072953.228477,
+"sunset": 1784124110.49098,
+"noon": 1784098539.0,
+"goldenMorningStart": 1784071907.951238,
+"goldenMorningEnd": 1784075074.467913,
+"goldenEveningStart": 1784121992.603716,
+"goldenEveningEnd": 1784125193.3324,
+"blueEveningStart": 1784125193.3324,
+"blueEveningEnd": 1784125855.422762
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"tz": "Asia/Kolkata",
+"date": "2026-01-15",
+"sunrise": 1768442134.114196,
+"sunset": 1768478563.653874,
+"noon": 1768460335.0,
+"goldenMorningStart": 1768441088.220832,
+"goldenMorningEnd": 1768444315.797917,
+"goldenEveningStart": 1768476381.95151,
+"goldenEveningEnd": 1768479609.572413,
+"blueEveningStart": 1768479609.572413,
+"blueEveningEnd": 1768480227.264756
+},
+{
+"place": "Mumbai",
+"lat": 19.076,
+"lon": 72.8777,
+"tz": "Asia/Kolkata",
+"date": "2026-10-03",
+"sunrise": 1790989183.350494,
+"sunset": 1791032111.279511,
+"noon": 1791010660.0,
+"goldenMorningStart": 1790988345.487619,
+"goldenMorningEnd": 1790990879.086925,
+"goldenEveningStart": 1791030416.302905,
+"goldenEveningEnd": 1791032948.703854,
+"blueEveningStart": 1791032948.703854,
+"blueEveningEnd": 1791033449.803278
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"tz": "Europe/London",
+"date": "2026-06-21",
+"sunrise": 1782013407.66199,
+"sunset": 1782073272.212695,
+"noon": 1782043333.0,
+"goldenMorningStart": 1782011642.451474,
+"goldenMorningEnd": 1782016578.560104,
+"goldenEveningStart": 1782070101.398193,
+"goldenEveningEnd": 1782075037.355996,
+"blueEveningStart": 1782075037.355996,
+"blueEveningEnd": 1782076194.687414
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"tz": "Europe/London",
+"date": "2026-12-21",
+"sunrise": 1797840246.352077,
+"sunset": 1797868383.679884,
+"noon": 1797854300.0,
+"goldenMorningStart": 1797838677.041751,
+"goldenMorningEnd": 1797843843.279644,
+"goldenEveningStart": 1797864786.761345,
+"goldenEveningEnd": 1797869952.984627,
+"blueEveningStart": 1797869952.984627,
+"blueEveningEnd": 1797870850.372683
+},
+{
+"place": "Tromso",
+"lat": 69.6492,
+"lon": 18.9553,
+"tz": "Europe/Oslo",
+"date": "2026-03-10",
+"sunrise": 1773120586.163639,
+"sunset": 1773159661.110479,
+"noon": 1773140072.0,
+"goldenMorningStart": 1773118308.635733,
+"goldenMorningEnd": 1773125453.140035,
+"goldenEveningStart": 1773154777.022874,
+"goldenEveningEnd": 1773161950.286135,
+"blueEveningStart": 1773161950.286135,
+"blueEveningEnd": 1773163316.950289
+},
+{
+"place": "Sydney",
+"lat": -33.8688,
+"lon": 151.2093,
+"tz": "Australia/Sydney",
+"date": "2026-01-10",
+"sunrise": 1767984907.66612,
+"sunset": 1768036176.507919,
+"noon": 1768010548.0,
+"goldenMorningStart": 1767983877.119126,
+"goldenMorningEnd": 1767987081.414265,
+"goldenEveningStart": 1768034056.607208,
+"goldenEveningEnd": 1768037260.916162,
+"blueEveningStart": 1768037260.916162,
+"blueEveningEnd": 1768037924.169485
+}
+],
+"positions": [
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1782001800.0,
+"azimuth": 66.71017433872314,
+"elevation": 6.326621664857726
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1782012600.0,
+"azimuth": 84.28836788246481,
+"elevation": 44.453645427950576
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1782023400.0,
+"azimuth": 133.83199282290485,
+"elevation": 82.69877669393844
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1782034200.0,
+"azimuth": 270.8841147138446,
+"elevation": 54.501854501096524
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1782045000.0,
+"azimuth": 288.4844830661961,
+"elevation": 15.733158111577765
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1797813000.0,
+"azimuth": 108.88245549242018,
+"elevation": -14.902549944136908
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1797823800.0,
+"azimuth": 132.1026851347084,
+"elevation": 19.254993448455664
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1797834600.0,
+"azimuth": 174.4492411518965,
+"elevation": 37.74623563355789
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1797845400.0,
+"azimuth": 220.85614853071502,
+"elevation": 25.130994768474167
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1797856200.0,
+"azimuth": 247.10876576152674,
+"elevation": -7.059812773198914
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1773966600.0,
+"azimuth": 86.75049371671201,
+"elevation": -6.415450884842855
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1773977400.0,
+"azimuth": 110.57419384835006,
+"elevation": 32.46696780275059
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1773988200.0,
+"azimuth": 165.35024740250887,
+"elevation": 60.44561130797524
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1773999000.0,
+"azimuth": 238.261003405164,
+"elevation": 43.831479311499514
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1774009800.0,
+"azimuth": 266.5322789817865,
+"elevation": 6.254089770896314
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1790987400.0,
+"azimuth": 92.18477107126061,
+"elevation": -4.13118131910997
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1790998200.0,
+"azimuth": 117.45499398237683,
+"elevation": 33.910394170896886
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1791009000.0,
+"azimuth": 175.2550943345838,
+"elevation": 57.30392652672154
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1791019800.0,
+"azimuth": 238.38789292146276,
+"elevation": 37.77061550260931
+},
+{
+"place": "New Delhi",
+"lat": 28.6139,
+"lon": 77.209,
+"epoch": 1791030600.0,
+"azimuth": 265.1943615996274,
+"elevation": 0.27518586719543237
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"epoch": 1784075400.0,
+"azimuth": 68.59713463147084,
+"elevation": 6.9034051351654995
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"epoch": 1784086200.0,
+"azimuth": 91.73345649550377,
+"elevation": 43.321703057026824
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"epoch": 1784097000.0,
+"azimuth": 154.24018279134688,
+"elevation": 76.14838710930586
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"epoch": 1784107800.0,
+"azimuth": 259.7192346984837,
+"elevation": 53.86620419315414
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"epoch": 1784118600.0,
+"azimuth": 284.8034102145148,
+"elevation": 16.95857971086454
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"epoch": 1768437000.0,
+"azimuth": 104.12146369217832,
+"elevation": -17.44393089464762
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"epoch": 1768447800.0,
+"azimuth": 130.00923679103812,
+"elevation": 15.677953720564076
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"epoch": 1768458600.0,
+"azimuth": 171.801060551668,
+"elevation": 34.307454352978255
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"epoch": 1768469400.0,
+"azimuth": 218.7297849156868,
+"elevation": 24.120477871502203
+},
+{
+"place": "Leh",
+"lat": 34.1526,
+"lon": 77.5771,
+"epoch": 1768480200.0,
+"azimuth": 248.5454909136933,
+"elevation": -5.967386291213543
+},
+{
+"place": "Mumbai",
+"lat": 19.076,
+"lon": 72.8777,
+"epoch": 1790987400.0,
+"azimuth": 91.4387561559163,
+"elevation": -7.80264801783845
+},
+{
+"place": "Mumbai",
+"lat": 19.076,
+"lon": 72.8777,
+"epoch": 1790998200.0,
+"azimuth": 108.72159806087797,
+"elevation": 34.00081458611641
+},
+{
+"place": "Mumbai",
+"lat": 19.076,
+"lon": 72.8777,
+"epoch": 1791009000.0,
+"azimuth": 162.89701608509304,
+"elevation": 65.95653864005233
+},
+{
+"place": "Mumbai",
+"lat": 19.076,
+"lon": 72.8777,
+"epoch": 1791019800.0,
+"azimuth": 242.31326760880415,
+"elevation": 45.95154914644243
+},
+{
+"place": "Mumbai",
+"lat": 19.076,
+"lon": 72.8777,
+"epoch": 1791030600.0,
+"azimuth": 263.86882275122707,
+"elevation": 5.141904539217222
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"epoch": 1782018000.0,
+"azimuth": 63.51903081493646,
+"elevation": 9.094240483010992
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"epoch": 1782028800.0,
+"azimuth": 97.50139052165066,
+"elevation": 36.2902887267256
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"epoch": 1782039600.0,
+"azimuth": 150.9752774751032,
+"elevation": 59.47347033448708
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"epoch": 1782050400.0,
+"azimuth": 230.0063491879955,
+"elevation": 53.97659779318163
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"epoch": 1782061200.0,
+"azimuth": 273.52991322965016,
+"elevation": 27.699648839575502
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"epoch": 1797832800.0,
+"azimuth": 105.37974696731112,
+"elevation": -17.90679487813381
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"epoch": 1797843600.0,
+"azimuth": 139.64539959728708,
+"elevation": 5.45648322311439
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"epoch": 1797854400.0,
+"azimuth": 180.33552197685393,
+"elevation": 15.054847452874697
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"epoch": 1797865200.0,
+"azimuth": 220.9380981792774,
+"elevation": 5.1694864809757775
+},
+{
+"place": "London",
+"lat": 51.5072,
+"lon": -0.1276,
+"epoch": 1797876000.0,
+"azimuth": 255.13452474348787,
+"elevation": -18.332254282184792
+},
+{
+"place": "Tromso",
+"lat": 69.6492,
+"lon": 18.9553,
+"epoch": 1773118800.0,
+"azimuth": 92.71928828916948,
+"elevation": -3.3689204226031677
+},
+{
+"place": "Tromso",
+"lat": 69.6492,
+"lon": 18.9553,
+"epoch": 1773129600.0,
+"azimuth": 135.56110891703295,
+"elevation": 10.652375372568429
+},
+{
+"place": "Tromso",
+"lat": 69.6492,
+"lon": 18.9553,
+"epoch": 1773140400.0,
+"azimuth": 181.44816851257073,
+"elevation": 16.338696414341868
+},
+{
+"place": "Tromso",
+"lat": 69.6492,
+"lon": 18.9553,
+"epoch": 1773151200.0,
+"azimuth": 227.1994845052703,
+"elevation": 10.05250587331578
+},
+{
+"place": "Tromso",
+"lat": 69.6492,
+"lon": 18.9553,
+"epoch": 1773162000.0,
+"azimuth": 269.9600475202171,
+"elevation": -4.153689198265397
+},
+{
+"place": "Sydney",
+"lat": -33.8688,
+"lon": 151.2093,
+"epoch": 1767985200.0,
+"azimuth": 116.75596939658973,
+"elevation": 0.11062102444627442
+},
+{
+"place": "Sydney",
+"lat": -33.8688,
+"lon": 151.2093,
+"epoch": 1767996000.0,
+"azimuth": 94.06750002913469,
+"elevation": 35.912458558315905
+},
+{
+"place": "Sydney",
+"lat": -33.8688,
+"lon": 151.2093,
+"epoch": 1768006800.0,
+"azimuth": 53.187570658480524,
+"elevation": 71.82325159823675
+},
+{
+"place": "Sydney",
+"lat": -33.8688,
+"lon": 151.2093,
+"epoch": 1768017600.0,
+"azimuth": 287.1029994416461,
+"elevation": 61.58815572194602
+},
+{
+"place": "Sydney",
+"lat": -33.8688,
+"lon": 151.2093,
+"epoch": 1768028400.0,
+"azimuth": 259.172118413215,
+"elevation": 24.582322452221376
+}
+],
+"note": "Generated with astral 3.2. astral sometimes returns an event for the neighbouring UTC day in time zones far from UTC; such values were moved to the requested local date (same time of day)."
+}

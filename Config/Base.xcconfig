@@ -1,0 +1,7 @@
+// Shared build settings.
+// Your Apple developer Team ID goes in Config/Local.xcconfig (not committed), see Local.xcconfig.example:
+//   DEVELOPMENT_TEAM = ABCDE12345
+// It is only needed to run on a real iPhone. The Simulator and the Mac app don't need it.
+// Bundle IDs are $(BUNDLE_ID_PREFIX).bmpcccontrol; override BUNDLE_ID_PREFIX in Local.xcconfig if Xcode says it's taken.
+BUNDLE_ID_PREFIX = com.infraxcoders
+#include? "Local.xcconfig"
