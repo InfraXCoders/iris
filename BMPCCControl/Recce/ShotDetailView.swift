@@ -41,6 +41,12 @@ struct ShotDetailView: View {
                 NavigationLink { LibraryView(mode: .pickCamera { c in shot.apply(camera: c) }) } label: {
                     LabeledContent("Camera", value: shot.cameraModel)
                 }
+                if shot.baseCamera.sensorModes.count > 1 {
+                    Picker("Recording mode", selection: Binding(get: { shot.sensorMode.id },
+                                                                set: { shot.sensorModeId = $0; shot.touch() })) {
+                        ForEach(shot.baseCamera.sensorModes) { Text($0.name).tag($0.id) }
+                    }
+                }
                 NavigationLink { LibraryView(mode: .pickLens { l in shot.apply(lens: l) }) } label: {
                     LabeledContent("Lens", value: shot.lensModel)
                 }
@@ -164,8 +170,21 @@ struct FramingSection: View {
                     LabeledContent("Anamorphic", value: String(format: "%.1fx squeeze, desqueezed %.2f:1", shot.lens.anamorphicSqueeze,
                                                                 ref.captureWidthMm / ref.captureHeightMm))
                 }
-                LabeledContent("Lens on camera", value: Compatibility.check(camera: shot.camera, lens: shot.lens).label)
-                LabeledContent("Minimum focus", value: String(format: "%.2f m", shot.lens.minimumFocusDistance))
+                let coverage = Coverage.evaluate(lens: shot.lens, mode: shot.sensorMode)
+                NavigationLink { CoverageView(cameraId: shot.baseCamera.id, lensId: shot.lens.id, modeId: shot.sensorMode.id) } label: {
+                    LabeledContent("Lens coverage") {
+                        HStack(spacing: 6) {
+                            Text(coverage.label)
+                            CoverageBadge(coverage: coverage, nominal: Coverage.circle(for: shot.lens)?.nominal ?? false)
+                        }
+                    }
+                }
+                if !Coverage.sharesMount(camera: shot.baseCamera, lens: shot.lens) {
+                    LabeledContent("Mount", value: "Adapter needed")
+                }
+                if shot.lens.minimumFocusDistance > 0 {
+                    LabeledContent("Minimum focus", value: String(format: "%.2f m", shot.lens.minimumFocusDistance))
+                }
             } else {
                 Text("Check the focal length and aspect ratio.").foregroundStyle(.secondary)
             }

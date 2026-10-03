@@ -28,15 +28,43 @@ public struct CameraProfile: Identifiable, Hashable, Codable, Sendable {
     public var nativeAspectRatio: String
     public var mount: Mount
     public var verificationStatus: VerificationStatus
+    /// Recording modes with their active sensor area (database cameras). Empty for the original built-ins.
+    public var modes: [SensorMode]?
+    /// All mount names as the maker lists them (e.g. ["LPL", "PL"]), including ones `Mount` has no case for.
+    public var mountNames: [String]?
+    public var sourceURL: String?
 
     public init(id: String, manufacturer: String, model: String, cameraType: String, sensorFormatId: String,
                 sensorWidthMm: Double, sensorHeightMm: Double, resolutionWidth: Int, resolutionHeight: Int,
-                nativeAspectRatio: String = "16:9", mount: Mount, verificationStatus: VerificationStatus = .unverified) {
+                nativeAspectRatio: String = "16:9", mount: Mount, verificationStatus: VerificationStatus = .unverified,
+                modes: [SensorMode]? = nil, mountNames: [String]? = nil, sourceURL: String? = nil) {
         self.id = id; self.manufacturer = manufacturer; self.model = model; self.cameraType = cameraType
         self.sensorFormatId = sensorFormatId; self.sensorWidthMm = sensorWidthMm; self.sensorHeightMm = sensorHeightMm
         self.resolutionWidth = resolutionWidth; self.resolutionHeight = resolutionHeight
         self.nativeAspectRatio = nativeAspectRatio; self.mount = mount; self.verificationStatus = verificationStatus
+        self.modes = modes; self.mountNames = mountNames; self.sourceURL = sourceURL
     }
+
+    /// Recording modes; a camera without listed modes has one mode covering its whole sensor.
+    public var sensorModes: [SensorMode] {
+        if let modes, !modes.isEmpty { return modes }
+        return [SensorMode(id: "full", name: "Full sensor", widthMm: sensorWidthMm, heightMm: sensorHeightMm,
+                           resolutionWidth: resolutionWidth, resolutionHeight: resolutionHeight)]
+    }
+    public func mode(id: String?) -> SensorMode? {
+        guard let id else { return nil }
+        return sensorModes.first { $0.id == id }
+    }
+    /// This camera with its sensor area set to one recording mode (unchanged if the mode isn't found).
+    public func using(modeId: String?) -> CameraProfile {
+        guard let m = mode(id: modeId) else { return self }
+        var c = self
+        c.sensorWidthMm = m.widthMm; c.sensorHeightMm = m.heightMm
+        if let w = m.resolutionWidth { c.resolutionWidth = w }
+        if let h = m.resolutionHeight { c.resolutionHeight = h }
+        return c
+    }
+    public var allMountNames: [String] { mountNames ?? [mount.rawValue] }
 
     public var displayName: String { "\(manufacturer) \(model)" }
     public var sensorDiagonalMm: Double { (sensorWidthMm * sensorWidthMm + sensorHeightMm * sensorHeightMm).squareRoot() }
@@ -55,19 +83,38 @@ public struct LensProfile: Identifiable, Hashable, Codable, Sendable {
     public var maximumAperture: Double
     public var minimumFocusDistance: Double
     public var anamorphicSqueeze: Double
+    /// 0 when the maker doesn't publish it (see `hasImageCircle`).
     public var imageCircleMm: Double
     public var verificationStatus: VerificationStatus
+    // Extra details from the lens database (nil for the original built-ins or when not published).
+    public var series: String?
+    public var lengthMm: Double?
+    public var weightG: Double?
+    public var frontDiameterMm: Double?
+    public var mountNames: [String]?
+    /// Format the lens is designed for: MFT, S35, APS-C, FF, LF or 65.
+    public var format: String?
+    public var sourceURL: String?
+    public var notes: String?
 
     public init(id: String, manufacturer: String, model: String, mount: Mount, lensType: LensType,
                 focalLengthMin: Double, focalLengthMax: Double, availableFocalLengths: [Double] = [],
                 maximumAperture: Double, minimumFocusDistance: Double, anamorphicSqueeze: Double = 1,
-                imageCircleMm: Double, verificationStatus: VerificationStatus = .unverified) {
+                imageCircleMm: Double, verificationStatus: VerificationStatus = .unverified,
+                series: String? = nil, lengthMm: Double? = nil, weightG: Double? = nil, frontDiameterMm: Double? = nil,
+                mountNames: [String]? = nil, format: String? = nil, sourceURL: String? = nil, notes: String? = nil) {
         self.id = id; self.manufacturer = manufacturer; self.model = model; self.mount = mount; self.lensType = lensType
         self.focalLengthMin = focalLengthMin; self.focalLengthMax = focalLengthMax
         self.availableFocalLengths = availableFocalLengths; self.maximumAperture = maximumAperture
         self.minimumFocusDistance = minimumFocusDistance; self.anamorphicSqueeze = anamorphicSqueeze
         self.imageCircleMm = imageCircleMm; self.verificationStatus = verificationStatus
+        self.series = series; self.lengthMm = lengthMm; self.weightG = weightG; self.frontDiameterMm = frontDiameterMm
+        self.mountNames = mountNames; self.format = format; self.sourceURL = sourceURL; self.notes = notes
     }
+
+    public var hasImageCircle: Bool { imageCircleMm > 0 }
+    public var hasAperture: Bool { maximumAperture > 0 }
+    public var allMountNames: [String] { mountNames ?? [mount.rawValue] }
 
     public var displayName: String { "\(manufacturer) \(model)" }
     public var isZoom: Bool { focalLengthMax > focalLengthMin }

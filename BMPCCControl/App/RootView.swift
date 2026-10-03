@@ -20,7 +20,7 @@ struct RootView: View {
                     Button { quickRecce() } label: {
                         Label { VStack(alignment: .leading) {
                             Text("Quick recce").font(.headline)
-                            Text("Open the viewfinder with \(BuiltInLibrary.camera(id: defaultCameraId)?.model ?? "your camera")")
+                            Text("Open the viewfinder with \(Catalog.camera(id: defaultCameraId)?.model ?? "your camera")")
                                 .font(.caption).foregroundStyle(.secondary)
                         } } icon: { Image(systemName: "viewfinder").foregroundStyle(Theme.accent) }
                     }
@@ -41,8 +41,10 @@ struct RootView: View {
                     }
                 }
 
-                Section("More") {
-                    NavigationLink { LibraryView() } label: { Label("Camera & lens library", systemImage: "camera.aperture") }
+                Section("Databases & tools") {
+                    NavigationLink { LibraryView(tab: .lenses) } label: { Label("Lens database", systemImage: "camera.aperture") }
+                    NavigationLink { LibraryView(tab: .cameras) } label: { Label("Camera database", systemImage: "video") }
+                    NavigationLink { CoverageView() } label: { Label("Lens coverage tool", systemImage: "circle.rectangle.dashed") }
                     Button { importing = true } label: { Label("Import recce (JSON)", systemImage: "square.and.arrow.down") }
                     Label { VStack(alignment: .leading) {
                         Text("Camera control")
@@ -69,8 +71,8 @@ struct RootView: View {
     }
 
     private func quickRecce() {
-        let cam = BuiltInLibrary.camera(id: defaultCameraId) ?? BuiltInLibrary.cameras[0]
-        let lens = BuiltInLibrary.lens(id: defaultLensId) ?? BuiltInLibrary.lenses[0]
+        let cam = Catalog.camera(id: defaultCameraId) ?? Catalog.defaultCamera
+        let lens = Catalog.lens(id: defaultLensId) ?? Catalog.defaultLens
         do { viewfinderShot = try RecceFactory.quickRecceShot(camera: cam, lens: lens, context: context) }
         catch { alert = error.localizedDescription }
     }

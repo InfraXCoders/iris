@@ -110,8 +110,8 @@ enum RecceExport {
             context.insert(scene)
             scene.session = session
             for d in sd.shots {
-                let camera = BuiltInLibrary.cameras.first { $0.model == d.cameraModel } ?? BuiltInLibrary.cameras[0]
-                let lens = BuiltInLibrary.lenses.first { $0.model == d.lensModel } ?? BuiltInLibrary.lenses[0]
+                let camera = Catalog.cameras.first { $0.model == d.cameraModel } ?? Catalog.defaultCamera
+                let lens = Catalog.lenses.first { $0.model == d.lensModel } ?? Catalog.defaultLens
                 let shot = RecceShot(id: d.id, shotNumber: d.shotNumber, shotType: d.shotType, camera: camera, lens: lens,
                                      created: RecceJSON.date(d.creationTimestamp))
                 // Keep exactly what was recorded, even for cameras/lenses that aren't in the library.

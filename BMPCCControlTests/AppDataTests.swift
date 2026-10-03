@@ -88,6 +88,23 @@ final class AppDataTests: XCTestCase {
         XCTAssertEqual(RecceFactory.newScene(in: session, context: context).sceneNumber, "2")
     }
 
+    func testRecordingModeChangesFraming() throws {
+        let session = RecceFactory.newSession(project: "Modes", location: "Studio", in: context)
+        let scene = RecceFactory.newScene(in: session, context: context)
+        let camera = try XCTUnwrap(Catalog.camera(id: "arri_alexa_35"))
+        let lens = try XCTUnwrap(Catalog.lens(id: "arri_zeiss_master_anamorphic_50"))
+        let shot = RecceFactory.newShot(in: scene, camera: camera, lens: lens, context: context)
+        XCTAssertEqual(shot.aperture, "f/1.9")
+        let fullWidth = try XCTUnwrap(shot.reference).captureWidthMm
+        let smaller = try XCTUnwrap(camera.sensorModes.min { $0.widthMm < $1.widthMm })
+        shot.sensorModeId = smaller.id
+        XCTAssertEqual(shot.sensorMode.id, smaller.id)
+        XCTAssertLessThan(try XCTUnwrap(shot.reference).captureWidthMm, fullWidth)
+        // Changing camera goes back to the new camera's largest mode.
+        shot.apply(camera: Catalog.defaultCamera)
+        XCTAssertNil(shot.sensorModeId)
+    }
+
     func testPDFReport() throws {
         let session = try RecceExport.importDocument(RecceJSON.decode(Data(androidJSON.utf8)), into: context)
         let note = RecceNote(text: "Window light from the left, 35mm, dolly in")

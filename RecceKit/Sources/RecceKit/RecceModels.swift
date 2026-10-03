@@ -268,4 +268,12 @@ public enum ShotPresets {
     public static func apertureText(_ f: Double) -> String {
         f.rounded() == f ? "f/\(Int(f)).0" : "f/\(f)"
     }
+
+    /// 2 -> "2.0", 1.9 -> "1.9", 2.25 -> "2.25" (for "T2.0" style labels).
+    public static func apertureNumber(_ f: Double) -> String {
+        f.rounded() == f ? "\(Int(f)).0" : String(format: "%g", f)
+    }
+
+    /// "T2.0" for a cine lens, "—" when unknown.
+    public static func tStopText(_ t: Double) -> String { t > 0 ? "T\(apertureNumber(t))" : "—" }
 }

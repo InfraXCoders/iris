@@ -54,8 +54,8 @@ struct SceneDetailView: View {
     }
 
     private func addShot() {
-        let cam = BuiltInLibrary.camera(id: defaultCameraId) ?? BuiltInLibrary.cameras[0]
-        let lens = BuiltInLibrary.lens(id: defaultLensId) ?? BuiltInLibrary.lenses[0]
+        let cam = Catalog.camera(id: defaultCameraId) ?? Catalog.defaultCamera
+        let lens = Catalog.lens(id: defaultLensId) ?? Catalog.defaultLens
         _ = RecceFactory.newShot(in: scene, camera: cam, lens: lens, context: context)
         try? context.save()
     }

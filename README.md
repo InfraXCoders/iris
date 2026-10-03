@@ -13,8 +13,12 @@ Everything here is free: no accounts, no servers, no paid APIs. All data stays o
   lines saved, and drop markers for subject, camera, key light and so on.
 - **Recces → scenes → shots.** Shot type, movement, camera, lens, focal length, T-stop, aspect, frame rate,
   shutter, ISO, ND, white balance, camera height and distance, plus notes.
-- **Camera & lens library.** 13 cameras and 12 lenses (the same list as the Android app), with field-of-view
-  tables, lens/sensor coverage checks, favourites and defaults for new shots.
+- **Lens database.** About 300 anamorphic primes from 15 makers (ARRI/ZEISS, Cooke, Hawk, Panavision, Atlas,
+  SIRUI, Laowa, Blazar, DZOFilm and more): focal length, T-stop, squeeze, close focus, image circle, length,
+  weight, front diameter and mounts, with filters and a link to the maker's spec sheet for every lens.
+- **Camera database.** About 50 cinema cameras with their recording modes and the sensor area each one uses.
+- **Lens coverage tool.** The image circle drawn over the sensor for any camera, mode and lens, with a verdict,
+  field of view and mount check. Shots also have a recording mode, so frame lines follow the crop.
 - **Sun.** Sunrise, sunset, solar noon, golden hour and blue hour for the recce's location and date, and where
   the sun is now.
 - **Voice notes** in English, Hindi or Hinglish, turned into text and auto-sorted into composition, lighting
@@ -67,6 +71,7 @@ set it to the angle of the lens on that camera.
 | `BMPCCControl/` | The SwiftUI app, one code base for iPhone, iPad and Mac. |
 | `BMPCCControlTests/` | App tests: saving, JSON import/export, PDF report. |
 | `project.yml` | The Xcode project definition (XcodeGen). The `.xcodeproj` is generated, not committed. |
+| `DATABASE.md` | Where the lens and camera data come from, how to edit it, known gaps. |
 | `PORTING_NOTES.md` | What changed from the Android app and why, including bugs found. |
 
 ## Privacy

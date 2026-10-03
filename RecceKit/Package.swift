@@ -9,7 +9,7 @@ let package = Package(
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [.library(name: "RecceKit", targets: ["RecceKit"])],
     targets: [
-        .target(name: "RecceKit"),
+        .target(name: "RecceKit", resources: [.copy("Data")]),
         .testTarget(name: "RecceKitTests", dependencies: ["RecceKit"], resources: [.copy("Fixtures")]),
     ]
 )

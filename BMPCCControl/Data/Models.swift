@@ -101,6 +101,8 @@ final class RecceShot {
     var cameraId: String
     var lensId: String
     var cameraModel: String
+    /// Recording mode of the camera (its sensor area). nil = the camera's largest mode.
+    var sensorModeId: String?
     var lensModel: String
     var focalLength: String
     var aperture: String
@@ -133,7 +135,7 @@ final class RecceShot {
         self.cameraModel = camera.model
         self.lensModel = lens.model
         self.focalLength = ShotPresets.focalText(lens.clampFocal(focalLength ?? lens.focalLengthMin))
-        self.aperture = ShotPresets.apertureText(lens.maximumAperture)
+        self.aperture = lens.hasAperture ? ShotPresets.apertureText(lens.maximumAperture) : ""
         self.aspectRatio = "16:9"
         self.fps = "24"
         self.shutter = "180°"
@@ -157,15 +159,21 @@ final class RecceShot {
         set { movementRaw = newValue.rawValue }
     }
     /// Library entries for this shot. Falls back to matching the stored model names (Android imports).
-    var camera: CameraProfile {
-        BuiltInLibrary.camera(id: cameraId)
-            ?? BuiltInLibrary.cameras.first { $0.model == cameraModel }
-            ?? BuiltInLibrary.cameras[0]
+    var baseCamera: CameraProfile {
+        Catalog.camera(id: cameraId)
+            ?? Catalog.cameras.first { $0.model == cameraModel }
+            ?? Catalog.defaultCamera
+    }
+    /// The camera with its sensor area set to the shot's recording mode.
+    var camera: CameraProfile { baseCamera.using(modeId: sensorModeId) }
+    var sensorMode: SensorMode {
+        let base = baseCamera
+        return base.mode(id: sensorModeId) ?? base.sensorModes[0]
     }
     var lens: LensProfile {
-        BuiltInLibrary.lens(id: lensId)
-            ?? BuiltInLibrary.lenses.first { $0.model == lensModel }
-            ?? BuiltInLibrary.lenses[0]
+        Catalog.lens(id: lensId)
+            ?? Catalog.lenses.first { $0.model == lensModel }
+            ?? Catalog.defaultLens
     }
     var focalMm: Double { ShotPresets.focalValue(focalLength) ?? lens.focalLengthMin }
     var aspectValue: Double? { ShotPresets.aspectValue(aspectRatio) }
@@ -178,13 +186,14 @@ final class RecceShot {
     func apply(camera c: CameraProfile) {
         cameraId = c.id
         cameraModel = c.model
+        sensorModeId = nil
         touch()
     }
     func apply(lens l: LensProfile) {
         lensId = l.id
         lensModel = l.model
         focalLength = ShotPresets.focalText(l.clampFocal(focalMm))
-        aperture = ShotPresets.apertureText(l.maximumAperture)
+        aperture = l.hasAperture ? ShotPresets.apertureText(l.maximumAperture) : ""
         touch()
     }
     func touch() { modified = .now }
