@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Viewfinder corners -->
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="4" android:fillColor="#00000000"
+        android:pathData="M30,44 L30,36 L38,36 M70,36 L78,36 L78,44 M78,64 L78,72 L70,72 M38,72 L30,72 L30,64" />
+    <!-- Lens -->
+    <path android:fillColor="#FFFF5500" android:pathData="M54,54m-11,0a11,11 0,1 1,22 0a11,11 0,1 1,-22 0" />
+    <path android:fillColor="#FF0E0E10" android:pathData="M54,54m-5,0a5,5 0,1 1,10 0a5,5 0,1 1,-10 0" />
+</vector>

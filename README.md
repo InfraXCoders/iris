@@ -1,7 +1,8 @@
-# BMPCC Control (iPhone + Mac)
+# BMPCC Control (iPhone, Mac and Android)
 
 A location-recce app for filmmakers shooting on Blackmagic Pocket Cinema cameras, ported from the Android
-app *BMPCC Control*. This first version is **Recce mode**. Camera control over Bluetooth comes later.
+app *BMPCC Control*. This first version is **Recce mode**, on iPhone, Mac and Android. Camera control over
+Bluetooth comes later.
 
 Everything here is free: no accounts, no servers, no paid APIs. All data stays on your device.
 
@@ -90,8 +91,8 @@ For a build problem, send the last lines `test.command` printed (or the matching
 
 ### Sharing a test build (for the project owner)
 
-A tester needs a Mac with Xcode; there is no free way to send an iPhone app to someone remote
-(that needs the paid Apple Developer Program and TestFlight).
+For the iPhone app a tester needs a Mac with Xcode; there is no free way to send an iPhone app to someone remote
+(that needs the paid Apple Developer Program and TestFlight). For Android, just send the APK (see **Android** above).
 
 Make a clean zip of the project (source only: no build files, no Team ID):
 
@@ -101,7 +102,7 @@ git archive --format=zip -o ~/Desktop/BMPCC-Control-iOS.zip HEAD
 ```
 
 Send `BMPCC-Control-iOS.zip`. The tester unzips it and follows **Get started** and **Your iPhone** above.
-(Don't send the original `BMPCC-Control.zip`: that is the Android app's source.)
+(Don't send the original `BMPCC-Control.zip`: that is the old Android app's source, not this one.)
 
 Mac-only testers can also get the built app:
 
@@ -112,6 +113,18 @@ cd .build/DerivedData/Build/Products/Debug && zip -r ~/Desktop/BMPCC-Control-Mac
 
 It isn't notarised, so the first time the tester right-clicks the app → **Open** → **Open**
 (or allows it in **System Settings → Privacy & Security → Open Anyway**).
+
+### Android
+
+The Android app is in the `android/` folder (same features, same lens/camera data). Get the APK either way:
+
+- **GitHub builds it:** push, then GitHub → **Actions** → **Android APK** → the latest run → **Artifacts**.
+- **Your Mac builds it:** `bash build_android.command` (installs Java 17 and the Android tools with Homebrew the
+  first time) → `BMPCC-Control-android.apk` in this folder.
+
+Send the APK to a tester (WhatsApp, Drive, email). On the phone: tap it, allow installing from that app, tap
+**Install** (if Play Protect warns, **More details → Install anyway**). No Mac or account needed on their side.
+Details: [android/README.md](android/README.md).
 
 ### Mac camera field of view
 
@@ -126,8 +139,10 @@ set it to the angle of the lens on that camera.
 | `RecceKit/` | All the maths and data formats (optics, framing, sun, note sorting, Android JSON), with tests checked against the Android app's own code. No UI; runs anywhere Swift runs. |
 | `BMPCCControl/` | The SwiftUI app, one code base for iPhone, iPad and Mac. |
 | `BMPCCControlTests/` | App tests: saving, JSON import/export, recording modes, PDF report. |
-| `*.command` | `test` (build + test everything), `run_mac`, `open_xcode`, `set_team` (Apple ID for iPhone installs). |
+| `*.command` | `test` (build + test everything), `run_mac`, `open_xcode`, `set_team` (Apple ID for iPhone installs), `build_android` (APK). |
 | `project.yml` | The Xcode project definition (XcodeGen). The `.xcodeproj` is generated, not committed. |
+| `android/` | The Android app (Kotlin, Jetpack Compose) and its `core` module with the same maths and data. |
+| `.github/workflows/android.yml` | Builds the Android APK on GitHub on every push. |
 | `DATABASE.md` | Where the lens and camera data come from, how to edit it, known gaps. |
 | `PORTING_NOTES.md` | What changed from the Android app and why, including bugs found. |
 

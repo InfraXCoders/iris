@@ -6,6 +6,7 @@ The app's lens database, camera database and coverage tool read two plain CSV fi
 - `RecceKit/Sources/RecceKit/Data/cameras.csv`: 54 cameras, 285 recording modes
 
 Open them in Numbers or Excel, edit, save as CSV (UTF-8), then run `bash test.command`.
+The Android app reads copies in `android/core/src/main/resources/data/`: copy edited files there too.
 The tests check every row (ranges, unique ids, square photosites, a source link on each row).
 
 ## Where the numbers come from
