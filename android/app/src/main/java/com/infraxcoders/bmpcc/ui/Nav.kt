@@ -52,6 +52,8 @@ sealed interface Dest {
     class SunAr(val planner: Sun) : Dest
     /** LUT library: built-in looks and imported .cube files. */
     data object Luts : Dest
+    /** All recces with a location on a map (optionally centred on one). */
+    data class RecceMap(val focusSessionId: String? = null) : Dest
     data class LensInfo(val lensId: String) : Dest
     data class CameraInfo(val cameraId: String) : Dest
     class Coverage(cameraId: String? = null, lensId: String? = null, modeId: String? = null) : Dest {
@@ -113,5 +115,6 @@ private fun Content(nav: Navigator, d: Dest) {
         is Dest.Sun -> SunPlannerScreen(nav, d)
         is Dest.SunAr -> SunArScreen(nav, d.planner)
         Dest.Luts -> LutLibraryScreen(nav)
+        is Dest.RecceMap -> RecceMapScreen(nav, d.focusSessionId)
     }
 }

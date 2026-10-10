@@ -74,7 +74,10 @@ class Lut3D(
         for (i in pixels.indices) {
             val p = pixels[i]
             var r = ((p shr 16) and 0xFF) / 255f; var g = ((p shr 8) and 0xFF) / 255f; var b = (p and 0xFF) / 255f
-            if (input == LutInput.BMD_FILM_GEN5) { r = InputTransform.rec709ToGen5(r); g = InputTransform.rec709ToGen5(g); b = InputTransform.rec709ToGen5(b) }
+            if (input == LutInput.BMD_FILM_GEN5) {
+                InputTransform.displayToGen5(r, g, b, out)
+                r = out[0]; g = out[1]; b = out[2]
+            }
             apply(r, g, b, out)
             fun ch(v: Float) = (v.coerceIn(0f, 1f) * 255f).roundToInt()
             pixels[i] = (p and 0xFF000000.toInt()) or (ch(out[0]) shl 16) or (ch(out[1]) shl 8) or ch(out[2])
@@ -85,15 +88,15 @@ class Lut3D(
 /** What the LUT expects as input. The phone camera gives display (Rec.709 / sRGB) pictures. */
 enum class LutInput(val label: String, val code: String) {
     REC709("Rec.709 (look / display LUTs)", "rec709"),
-    BMD_FILM_GEN5("Blackmagic Film Gen 5 (log → approximated from the phone)", "bmdgen5");
+    BMD_FILM_GEN5("Blackmagic Film Gen 5 (log, approximated from the phone)", "bmdgen5");
 
     companion object { fun of(code: String?): LutInput = entries.firstOrNull { it.code == code } ?: REC709 }
 }
 
 /**
- * Turning the phone's display picture into what a log LUT expects. An approximation: the phone picture is
- * tone-mapped and limited to Rec.709, so highlights and saturation won't match a real BRAW/log recording.
- * Tone only (no gamut conversion).
+ * Turning the phone's display picture into what a log LUT expects: display → linear Rec.709 → Blackmagic Wide Gamut
+ * (Gen 5) → Blackmagic Film Gen 5 curve. Still an approximation: the phone picture is already tone-mapped and
+ * limited to Rec.709 colours and the phone's dynamic range, so highlights won't match a real BRAW recording.
  */
 object InputTransform {
     /** Rec.709 / sRGB-style display value → linear (sRGB EOTF). */
@@ -110,6 +113,51 @@ object InputTransform {
     }
 
     fun rec709ToGen5(v: Float): Float = gen5Oetf(displayToLinear(v.coerceIn(0f, 1f)))
+
+    /** xy chromaticities: Rec.709 / sRGB and Blackmagic Wide Gamut (Gen 4/5), both with a D65 white. */
+    private val REC709 = doubleArrayOf(0.64, 0.33, 0.30, 0.60, 0.15, 0.06)
+    /** Blackmagic Design, "Blackmagic Generation 5 Color Science" (2021), values as in colour-science. */
+    private val BMD_WIDE_GAMUT = doubleArrayOf(0.7177215, 0.3171181, 0.2280410, 0.8615690, 0.1005841, -0.0820452)
+    private val D65 = doubleArrayOf(0.3127170, 0.3290312)
+
+    /** Linear Rec.709 → linear Blackmagic Wide Gamut, row-major 3×3. */
+    val rec709ToWideGamut: DoubleArray by lazy { multiply(invert(npm(BMD_WIDE_GAMUT, D65)), npm(REC709, D65)) }
+
+    /** Display (Rec.709 / sRGB-style) RGB → Blackmagic Film Gen 5 code values in Blackmagic Wide Gamut, into [out]. */
+    fun displayToGen5(r: Float, g: Float, b: Float, out: FloatArray) {
+        val m = rec709ToWideGamut
+        val lr = displayToLinear(r.coerceIn(0f, 1f)); val lg = displayToLinear(g.coerceIn(0f, 1f)); val lb = displayToLinear(b.coerceIn(0f, 1f))
+        for (i in 0 until 3) {
+            val v = (m[i * 3] * lr + m[i * 3 + 1] * lg + m[i * 3 + 2] * lb).toFloat()
+            out[i] = gen5Oetf(maxOf(v, 0f))
+        }
+    }
+
+    /** Normalised primary matrix (RGB → XYZ) from xy primaries and white. */
+    internal fun npm(p: DoubleArray, w: DoubleArray): DoubleArray {
+        fun xyz(x: Double, y: Double) = doubleArrayOf(x / y, 1.0, (1 - x - y) / y)
+        val r = xyz(p[0], p[1]); val g = xyz(p[2], p[3]); val b = xyz(p[4], p[5])
+        val prim = doubleArrayOf(r[0], g[0], b[0], r[1], g[1], b[1], r[2], g[2], b[2])
+        val wv = xyz(w[0], w[1])
+        val inv = invert(prim)
+        val s = DoubleArray(3) { i -> inv[i * 3] * wv[0] + inv[i * 3 + 1] * wv[1] + inv[i * 3 + 2] * wv[2] }
+        return DoubleArray(9) { k -> prim[k] * s[k % 3] }
+    }
+
+    internal fun multiply(a: DoubleArray, b: DoubleArray) = DoubleArray(9) { k ->
+        val i = k / 3; val j = k % 3
+        a[i * 3] * b[j] + a[i * 3 + 1] * b[3 + j] + a[i * 3 + 2] * b[6 + j]
+    }
+
+    internal fun invert(m: DoubleArray): DoubleArray {
+        val (a, b, c) = Triple(m[0], m[1], m[2]); val (d, e, f) = Triple(m[3], m[4], m[5]); val (g, h, i) = Triple(m[6], m[7], m[8])
+        val det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+        return doubleArrayOf(
+            (e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det,
+            (f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det,
+            (d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det,
+        )
+    }
 }
 
 /** Reads Adobe/Resolve .cube files: 3D (LUT_3D_SIZE) or 1D (LUT_1D_SIZE, turned into a 33³ 3D LUT). */

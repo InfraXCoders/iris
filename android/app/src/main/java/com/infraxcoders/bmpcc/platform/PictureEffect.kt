@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.infraxcoders.bmpcc.core.FalseColour
+import com.infraxcoders.bmpcc.core.InputTransform
 import com.infraxcoders.bmpcc.core.Lut3D
 import com.infraxcoders.bmpcc.core.LutInput
 import com.infraxcoders.bmpcc.core.PeakingColour
@@ -61,6 +62,9 @@ uniform float split;
 uniform float gen5;
 uniform float3 dmin;
 uniform float3 dmax;
+uniform float3 wg0;
+uniform float3 wg1;
+uniform float3 wg2;
 uniform float falseColour;
 uniform float zebra;
 uniform float stripe;
@@ -79,14 +83,18 @@ float toLinear(float v) {
     return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4);
 }
 
-float toGen5(float v) {
-    float x = toLinear(v);
+float toGen5(float x) {
     return x < 0.005 ? 8.283605932402494 * x + 0.09246575342465753
                      : 0.08692876065491224 * log(x + 0.005494072432257808) + 0.5300133392291939;
 }
 
 float3 grade(float3 rgb) {
-    if (gen5 > 0.5) { rgb = float3(toGen5(rgb.r), toGen5(rgb.g), toGen5(rgb.b)); }
+    if (gen5 > 0.5) {
+        // Display → linear Rec.709 → Blackmagic Wide Gamut → Film Gen 5 curve.
+        float3 lin = float3(toLinear(rgb.r), toLinear(rgb.g), toLinear(rgb.b));
+        float3 wg = max(float3(dot(wg0, lin), dot(wg1, lin), dot(wg2, lin)), 0.0);
+        rgb = float3(toGen5(wg.r), toGen5(wg.g), toGen5(wg.b));
+    }
     rgb = clamp((rgb - dmin) / (dmax - dmin), 0.0, 1.0);
     float3 s = rgb * (size - 1.0);
     float b0 = floor(s.b);
@@ -173,6 +181,10 @@ half4 main(float2 p) {
         s.setFloatUniform("hasLut", if (lut != null) 1f else 0f)
         s.setFloatUniform("split", splitPx)
         s.setFloatUniform("gen5", if (input == LutInput.BMD_FILM_GEN5) 1f else 0f)
+        val m = InputTransform.rec709ToWideGamut
+        s.setFloatUniform("wg0", m[0].toFloat(), m[1].toFloat(), m[2].toFloat())
+        s.setFloatUniform("wg1", m[3].toFloat(), m[4].toFloat(), m[5].toFloat())
+        s.setFloatUniform("wg2", m[6].toFloat(), m[7].toFloat(), m[8].toFloat())
         s.setFloatUniform("falseColour", if (tools.falseColour) 1f else 0f)
         s.setFloatUniform("zebra", tools.zebraLevel?.let { Zebra.threshold(it).toFloat() } ?: 0f)
         s.setFloatUniform("stripe", 10f * density)

@@ -216,3 +216,97 @@ object Scopes {
         return img
     }
 }
+
+/**
+ * The live picture tools on the CPU, for phones that can't run them on the GPU (Android 12 and older): the LUT
+ * (right of [splitFraction]), then false colour and zebras on the graded picture, then peaking from the ungraded
+ * picture's edges. Works on a small upright frame (~480 px), so it's coarser than the GPU version.
+ */
+object PictureProcessor {
+    fun process(
+        f: ScopeFrame, lut: Lut3D?, input: LutInput, splitFraction: Double, falseColour: Boolean, zebraLevel: Int?,
+        peaking: PeakingLevel?, peakingColour: PeakingColour, stripePx: Int = 8,
+    ): IntArray {
+        val w = f.width; val h = f.height
+        val src = f.pixels
+        val out = src.copyOf()
+        if (lut != null) {
+            val from = (splitFraction.coerceIn(0.0, 1.0) * w).toInt()
+            if (from <= 0) lut.applyToPixels(out, input)
+            else if (from < w) {
+                val row = IntArray(w - from)
+                for (y in 0 until h) {
+                    System.arraycopy(out, y * w + from, row, 0, row.size)
+                    lut.applyToPixels(row, input)
+                    System.arraycopy(row, 0, out, y * w + from, row.size)
+                }
+            }
+        }
+        val zebra = zebraLevel?.let { Zebra.threshold(it) }
+        if (falseColour || zebra != null) for (y in 0 until h) for (x in 0 until w) {
+            val i = y * w + x
+            val l = Scopes.luma(out[i])
+            if (falseColour) out[i] = FalseColour.colour(l)
+            if (zebra != null && l >= zebra) {
+                val p = out[i]
+                out[i] = if ((x + y) % stripePx < stripePx / 2) 0xFFFFFFFF.toInt() else
+                    (0xFF shl 24) or ((((p shr 16) and 0xFF) * 35 / 100) shl 16) or ((((p shr 8) and 0xFF) * 35 / 100) shl 8) or ((p and 0xFF) * 35 / 100)
+            }
+        }
+        if (peaking != null) for (y in 1 until h - 1) for (x in 1 until w - 1) {
+            val gx = Scopes.luma(src[y * w + x + 1]) - Scopes.luma(src[y * w + x - 1])
+            val gy = Scopes.luma(src[(y + 1) * w + x]) - Scopes.luma(src[(y - 1) * w + x])
+            if (kotlin.math.sqrt(gx * gx + gy * gy) > peaking.threshold) out[y * w + x] = peakingColour.argb
+        }
+        return out
+    }
+}
+
+/**
+ * Exposure match: sets the phone's own ISO and exposure time so its picture gets the same exposure as the cinema
+ * camera (ISO, shutter, frame rate, ND and T-stop), instead of the phone's auto-exposure. Exposure ∝ t·ISO / (N²·2^ND).
+ * Approximate: phone and camera ISO ratings and tone curves differ; the T-stop is treated as an f-number.
+ */
+object ExposureMatch {
+    data class Phone(val iso: Int, val exposureNs: Long, /** > 0: the phone picture is this many stops darker than it should be; < 0 brighter. */ val stopsOff: Double)
+
+    /** Exposure time in seconds from "180°" at [fps], or "1/50". */
+    fun exposureSeconds(shutter: String, fps: String): Double? {
+        val t = shutter.trim()
+        if (t.contains('/')) {
+            val parts = t.split('/')
+            val a = parts.getOrNull(0)?.filter { it.isDigit() || it == '.' }?.toDoubleOrNull()
+            val b = parts.getOrNull(1)?.filter { it.isDigit() || it == '.' }?.toDoubleOrNull()
+            return if (a != null && b != null && a > 0 && b > 0) a / b else null
+        }
+        val angle = Exposure.shutterAngle(t) ?: return null
+        val f = fps.toDoubleOrNull()?.takeIf { it > 0 } ?: return null
+        return angle / 360.0 / f
+    }
+
+    /** ISO × seconds the phone needs at its f-number [phoneAperture], or null when the shot's settings are incomplete. */
+    fun target(iso: String, shutter: String, fps: String, nd: String, aperture: String, phoneAperture: Double): Double? {
+        val s = Exposure.iso(iso) ?: return null
+        val t = exposureSeconds(shutter, fps) ?: return null
+        val n = Exposure.stop(aperture) ?: return null
+        return t * s * phoneAperture * phoneAperture / (n * n * Math.pow(2.0, Exposure.ndStops(nd)))
+    }
+
+    /**
+     * Phone ISO and exposure time for [isoTimesSeconds]. Uses the cinema camera's own exposure time
+     * ([preferredSeconds], so motion blur looks alike) when it fits, at most [maxPreviewNs] (smooth preview);
+     * otherwise the longest allowed time, so the ISO (noise) stays as low as possible.
+     */
+    fun phone(
+        isoTimesSeconds: Double, isoMin: Int, isoMax: Int, minNs: Long, maxNs: Long,
+        preferredSeconds: Double? = null, maxPreviewNs: Long = 33_333_333,
+    ): Phone {
+        val tMax = minOf(maxNs, maxPreviewNs).coerceAtLeast(minNs) / 1e9
+        val tMin = minNs / 1e9
+        val t0 = (preferredSeconds ?: tMax).coerceIn(tMin, tMax)
+        val iso = (isoTimesSeconds / t0).coerceIn(isoMin.toDouble(), isoMax.toDouble()).roundToInt()
+        val t = (isoTimesSeconds / iso).coerceIn(tMin, tMax)
+        val got = iso * t
+        return Phone(iso, (t * 1e9).toLong(), kotlin.math.ln(isoTimesSeconds / got) / kotlin.math.ln(2.0))
+    }
+}

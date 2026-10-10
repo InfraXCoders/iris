@@ -85,4 +85,43 @@ class ScopeTests {
         assertEquals(1f, Scopes.crop(null, ScreenRect(0.0, 0.0, 10.0, 10.0))[2], 0f)
         assertEquals("99–100%", FalseColour.bands.last().label)
     }
+
+    @Test fun cpuPictureTools() {
+        val f = ScopeFrame(4, 3, IntArray(12) { if (it % 4 < 2) grey(0) else grey(255) })
+        val fc = PictureProcessor.process(f, null, LutInput.REC709, 0.0, true, null, null, PeakingColour.RED)
+        assertEquals(FalseColour.bands.first().argb, fc[0]); assertEquals(FalseColour.bands.last().argb, fc[3])
+        val pk = PictureProcessor.process(f, null, LutInput.REC709, 0.0, false, null, PeakingLevel.HIGH, PeakingColour.GREEN)
+        assertEquals(PeakingColour.GREEN.argb, pk[1 * 4 + 1]); assertEquals(grey(0), pk[0])
+        val z = PictureProcessor.process(f, null, LutInput.REC709, 0.0, false, 95, null, PeakingColour.RED, stripePx = 2)
+        assertEquals(0xFFFFFFFF.toInt(), z[1 * 4 + 3]) // (x + y) even: white stripe
+        assertEquals(grey(89), z[1 * 4 + 2]) // odd: darkened (255 × 35 %)
+        assertEquals(grey(0), z[0])
+        // A LUT right of the split only.
+        val bw = BuiltInLooks.all.first { it.name == "Black & white" }
+        val col = ScopeFrame(2, 1, intArrayOf(0xFFFF0000.toInt(), 0xFFFF0000.toInt()))
+        val split = PictureProcessor.process(col, bw, LutInput.REC709, 0.5, false, null, null, PeakingColour.RED)
+        assertEquals(0xFFFF0000.toInt(), split[0]); assertTrue(split[1] != 0xFFFF0000.toInt())
+    }
+
+    @Test fun exposureMatch() {
+        assertEquals(1 / 48.0, ExposureMatch.exposureSeconds("180°", "24")!!, 1e-12)
+        assertEquals(1 / 50.0, ExposureMatch.exposureSeconds("1/50", "24")!!, 1e-12)
+        // ISO 800, 1/48 s, T2.8, no ND on a f/1.8 phone: ISO·t = 800/48·(1.8/2.8)².
+        val k = ExposureMatch.target("800", "180°", "24", "None", "T2.8", 1.8)!!
+        assertEquals(800 / 48.0 * (1.8 / 2.8) * (1.8 / 2.8), k, 1e-9)
+        val p = ExposureMatch.phone(k, 50, 3200, 10_000, 200_000_000)
+        assertEquals(0.0, p.stopsOff, 0.05)
+        assertTrue(p.exposureNs <= 33_333_333)
+        // With the camera's own 1/48 s: the phone uses 1/48 s too.
+        val same = ExposureMatch.phone(k, 50, 3200, 10_000, 200_000_000, preferredSeconds = 1 / 48.0)
+        assertEquals(1e9 / 48, same.exposureNs.toDouble(), 2e5)
+        assertEquals(0.0, same.stopsOff, 0.05)
+        // ND 6 stops more: still reachable with a shorter time.
+        val k2 = ExposureMatch.target("800", "180°", "24", "ND 1.8 (6 stops)", "T2.8", 1.8)!!
+        assertEquals(k / 64, k2, 1e-9)
+        // Far too bright for the phone: reports how many stops off (negative = phone brighter than real).
+        val bright = ExposureMatch.phone(1e-7, 50, 3200, 10_000, 200_000_000)
+        assertTrue(bright.stopsOff < -5)
+        assertNull(ExposureMatch.target("", "180°", "24", "None", "T2.8", 1.8))
+    }
 }

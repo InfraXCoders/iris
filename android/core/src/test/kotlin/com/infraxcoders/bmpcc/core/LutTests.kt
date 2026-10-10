@@ -68,4 +68,16 @@ class LutTest {
         assertEquals(6, BuiltInLooks.all.size)
         assertEquals(64 * 16, BuiltInLooks.testChart(64, 16).size)
     }
+
+    @Test fun gamutRec709ToWideGamut() {
+        val m = InputTransform.rec709ToWideGamut
+        // White stays white; Rec.709 colours sit inside the wider gamut (no negatives).
+        for (i in 0 until 3) assertEquals(1.0, m[i * 3] + m[i * 3 + 1] + m[i * 3 + 2], 1e-6)
+        assertTrue(m.all { it > -1e-9 })
+        // A pure red is less saturated in the wider gamut.
+        assertTrue(m[3] > 0.01 && m[0] < 1.0)
+        val out = FloatArray(3)
+        InputTransform.displayToGen5(1f, 1f, 1f, out)
+        assertEquals(InputTransform.rec709ToGen5(1f), out[1], 1e-4f)
+    }
 }

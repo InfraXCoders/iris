@@ -33,6 +33,16 @@ import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import com.infraxcoders.bmpcc.core.RecceSearch
+import com.infraxcoders.bmpcc.platform.Places
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -136,6 +146,7 @@ fun HomeScreen(nav: Navigator) {
         Spacer(Modifier.height(10.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ToolLink("My recces · ${sessions.size}") { nav.push(Dest.Recces) }
+            ToolLink("Recce map") { nav.push(Dest.RecceMap()) }
             ToolLink("Lenses · ${Catalog.lenses.size}") { nav.push(Dest.Library(LibraryTab.LENSES)) }
             ToolLink("Cameras · ${Catalog.cameras.size}") { nav.push(Dest.Library(LibraryTab.CAMERAS)) }
             ToolLink("Lens coverage") { nav.push(Dest.Coverage()) }
@@ -183,6 +194,8 @@ fun RecceListScreen(nav: Navigator) {
     var showNew by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<RecceSession?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var filters by remember { mutableStateOf(RecceSearch.Filters()) }
+    val hits = remember(sessions, filters) { RecceSearch.search(sessions, filters) }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) message = try {
             val s = RecceStore.importJson(uri)
@@ -191,6 +204,7 @@ fun RecceListScreen(nav: Navigator) {
     }
 
     Screen("My recces", onBack = { nav.pop() }, actions = {
+        IconButton({ nav.push(Dest.RecceMap()) }) { Icon(Icons.Filled.Map, "Map of recces") }
         IconButton({ showNew = true }) { Icon(Icons.Filled.Add, "New recce project") }
     }) { pad ->
         LazyColumn(contentPadding = pad) {
@@ -199,9 +213,12 @@ fun RecceListScreen(nav: Navigator) {
                     nav.push(Dest.RecceStart)
                 }
             }
-            section("My recces") {
+            if (sessions.isNotEmpty()) item { RecceSearchBar(filters) { filters = it } }
+            section(if (filters.active) "Found ${hits.size} of ${sessions.size}" else "My recces") {
                 if (sessions.isEmpty()) item { Hint("No recces yet. Start a quick recce, tap + for a project, or import a JSON file from the iPhone app.") }
-                items(sessions, key = { it.id }) { s ->
+                else if (hits.isEmpty()) item { Hint("Nothing matches. Try fewer words or clear the filters.") }
+                items(hits, key = { it.session.id }) { hit ->
+                    val s = hit.session
                     Row(
                         Modifier.cardRow().clickable { nav.push(Dest.Session(s.id)) }.padding(start = 16.dp, top = 10.dp, bottom = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -212,8 +229,14 @@ fun RecceListScreen(nav: Navigator) {
                                 "${s.locationName} · ${DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(s.timestamp))}",
                                 style = MaterialTheme.typography.bodySmall, color = Color.Gray,
                             )
-                            Text("${s.scenes.size} scene(s) · ${s.shotCount} shot(s)", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Text(
+                                "${s.scenes.size} scene(s) · ${s.shotCount} shot(s)" + if (s.hasLocation) " · GPS" else "",
+                                style = MaterialTheme.typography.bodySmall, color = Color.Gray,
+                            )
+                            if (hit.matches.isNotEmpty()) Text("Found in: " + hit.matches.joinToString(", "),
+                                style = MaterialTheme.typography.bodySmall, color = Brand.accentText)
                         }
+                        if (s.hasLocation) IconButton({ nav.push(Dest.RecceMap(s.id)) }) { Icon(Icons.Filled.Place, "Show on map", tint = Color.Gray) }
                         IconButton(onClick = { confirmDelete = s }) { Icon(Icons.Filled.Delete, "Delete", tint = Color.Gray) }
                     }
                     RowDivider()
@@ -249,6 +272,27 @@ fun RecceListScreen(nav: Navigator) {
     }
 }
 
+/** Search box and filters for the recce list. */
+@Composable
+private fun RecceSearchBar(f: RecceSearch.Filters, onChange: (RecceSearch.Filters) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        OutlinedTextField(
+            f.query, { onChange(f.copy(query = it)) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Search projects, places, scenes, shot and voice notes") },
+            leadingIcon = { Icon(Icons.Filled.Search, null) },
+            trailingIcon = { if (f.query.isNotEmpty()) IconButton({ onChange(f.copy(query = "")) }) { Icon(Icons.Filled.Close, "Clear") } },
+        )
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            fun <T> next(list: List<T>, v: T) = list[(list.indexOf(v) + 1) % list.size]
+            ChoiceChip(f.time.label, f.time != RecceSearch.When.ANY) { onChange(f.copy(time = next(RecceSearch.When.entries, f.time))) }
+            ChoiceChip(f.scene.label, f.scene != RecceSearch.SceneKind.ANY) { onChange(f.copy(scene = next(RecceSearch.SceneKind.entries, f.scene))) }
+            ChoiceChip("With GPS", f.withLocation) { onChange(f.copy(withLocation = !f.withLocation)) }
+            ChoiceChip("Sort: " + f.sort.label, false) { onChange(f.copy(sort = next(RecceSearch.Sort.entries, f.sort))) }
+            if (f.active) ChoiceChip("Clear", false) { onChange(RecceSearch.Filters(sort = f.sort)) }
+        }
+    }
+}
+
 @Composable
 fun ActionRow(icon: ImageVector, title: String, subtitle: String?, tint: Color = Color.White, enabled: Boolean = true, onClick: () -> Unit) {
     Row(
@@ -274,6 +318,7 @@ fun NewSessionDialog(onDismiss: () -> Unit, onCreate: (String, String, Double?, 
     var lon by remember { mutableStateOf<Double?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
     val asker = rememberPermissionAsker { status = "Location access is off." }
+    val scope = rememberCoroutineScope()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("New recce") },
@@ -286,8 +331,18 @@ fun NewSessionDialog(onDismiss: () -> Unit, onCreate: (String, String, Double?, 
                         asker.withPermission(Manifest.permission.ACCESS_FINE_LOCATION) {
                             status = "Locating…"
                             Locator.request(context) { loc, err ->
-                                if (loc != null) { lat = loc.latitude; lon = loc.longitude; status = fmt("%.5f, %.5f", loc.latitude, loc.longitude) }
-                                else status = err
+                                if (loc != null) {
+                                    lat = loc.latitude; lon = loc.longitude
+                                    val pos = fmt("%.5f, %.5f", loc.latitude, loc.longitude)
+                                    status = pos
+                                    // Place name from GPS, for an empty Location field.
+                                    scope.launch {
+                                        Places.name(context, loc.latitude, loc.longitude)?.let { name ->
+                                            if (location.isBlank()) location = name
+                                            status = "$pos · $name"
+                                        }
+                                    }
+                                } else status = err
                             }
                         }
                     }) { Icon(Icons.Filled.MyLocation, null); Spacer(Modifier.width(6.dp)); Text("Use my location") }

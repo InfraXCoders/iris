@@ -56,6 +56,21 @@ The protocol code is in `core/.../Bmd.kt`, tested against the examples in Blackm
    - **Compare frames** (scene screen): every saved frame of the scene side by side, cropped to its frame lines.
 3. Frames, shots and notes are saved under **My recces → Quick Recce** (or the project you opened), with PDF export.
 
+### Finding recces: search, filters, map, place names
+
+- **Search** (My recces): words are matched across project and location names, director/DoP and location notes,
+  scene headings and notes, shot notes, shot type, camera/lens, LUT and voice notes (accents and case ignored; all
+  words must match). Each result says where it was found ("Found in: Shot 1A notes").
+- **Filters:** last 7 / 30 days / 12 months, INT. / EXT. / Day / Night scenes, with GPS only; sort by recently
+  changed, recce date or project name.
+- **Map** (Home → Recce map, the map button in My recces, or "Show on map" in a recce): every recce with a GPS
+  position as a pin on [OpenStreetMap](https://www.openstreetmap.org/copyright) (© OpenStreetMap contributors);
+  tap a pin → open the recce or **Directions** (opens the phone's maps app). Map tiles need internet and are cached;
+  pins work offline.
+- **Place name from GPS:** after "Use my location" (new recce or a recce page) the phone's own geocoder looks up a
+  short name such as "Hauz Khas, New Delhi". It fills an empty Location field, or is offered as "Use as name".
+  Needs internet; free (Android's built-in service).
+
 ### Sun planner and sun in the camera (AR)
 
 Open it from a recce (Sun → **Sun planner**), a shot (**Planned time**), the viewfinder (Guides → Sun planner)
@@ -112,12 +127,14 @@ The planned time and skyline are saved in Android recces (the iPhone app ignores
   WhatsApp. Each LUT shows a colour-chart preview and its **input**: Rec.709, or Blackmagic Film Gen 5 for
   log-to-Rec.709 LUTs (picked automatically when the file name says film / log / gen5 / BRAW / BMD).
 - **Live in the viewfinder:** the LUT button picks a look; "Before / after" adds a split you drag sideways.
-  Runs on the GPU and needs Android 13 or newer; on older phones the look is applied to saved frames only.
+  Runs on the GPU on Android 13 and newer; on older phones (or if the GPU effect fails) a lower-resolution CPU
+  version (~480 px, ~15 fps) is shown instead.
 - **Per shot:** the LUT is saved with each shot (shot page → Exposure → LUT). Saved frames and Compare have a
   Neutral / Graded switch, and the PDF report lists the LUT.
 - **Accuracy:** a monitoring preview, not a colour-managed pipeline. For Gen 5 LUTs the phone's picture is
-  converted to an approximate Film Gen 5 curve (Blackmagic's published Gen 5 formula): tone only, no gamut
-  conversion, so colours and highlights won't match a real BRAW grade. Use it to judge mood, not final colour.
+  converted display → linear Rec.709 → Blackmagic Wide Gamut → Film Gen 5 curve (Blackmagic's published Gen 5
+  colour science: primaries and curve). The phone picture is already tone-mapped and has less dynamic range than the
+  camera, so highlights and the extremes won't match a real BRAW grade. Use it to judge mood, not final colour.
 
 ### Exposure and focus tools
 
@@ -131,13 +148,19 @@ Viewfinder → **Expo** button. Settings are remembered.
 - **Scopes:** waveform, RGB parade or histogram of the picture **inside the frame lines**, ~10 times a second,
   with the share of clipped (any channel ≥ 99 %) and crushed (luma < 2.5 %) pixels. Tap the scope to enlarge it.
 - False colour and zebras work on the graded picture (after the shot's LUT) — what you see. Peaking uses the
-  ungraded picture's edges. False colour, zebras and peaking need Android 13 or newer; the scopes work on every phone.
+  ungraded picture's edges. Full quality on the GPU on Android 13+; older phones get a lower-resolution CPU
+  version. The scopes work on every phone.
+- **Phone picture exposure** (Exposure sheet): **Match exactly** (default) sets the phone's own ISO and shutter so
+  its picture gets the same exposure as the cinema camera: exposure ∝ shutter time × ISO ÷ (T-stop² × ND), solved
+  for the phone's fixed aperture, keeping the shutter at or under 1/30 s and the ISO as low as possible. A note
+  appears when the scene is beyond what the phone can show. **Follow** shifts the phone's auto-exposure by the
+  shot's stops; **Phone auto** leaves it alone. Phones without manual exposure (Camera2 MANUAL_SENSOR) follow.
 
-**Accuracy:** these measure the *phone's* picture. With "Preview exposure on the phone" on, the phone's
-auto-exposure is shifted to follow the planned ISO, shutter, ND and iris, so the tools show how the scene sits
-relative to that plan — a guide for lighting the scene, not the BMPCC's own signal. Phone sensors have less dynamic
-range than the camera, so they clip earlier. Peaking shows what is sharp for the phone's small lens, which has far
-more depth of field than a cine lens: use the Focus / DoF line for the cinema lens.
+**Accuracy:** these measure the *phone's* picture. With Match exactly, false colour and the scopes show roughly
+where the scene sits at the planned settings (phone and camera ISO ratings and tone curves differ, so treat it as
+± ½–1 stop) — a guide for lighting the scene, not the BMPCC's own signal. Phone sensors have less dynamic range than
+the camera, so they clip earlier. Peaking shows what is sharp for the phone's small lens, which has far more depth
+of field than a cine lens: use the Focus / DoF line for the cinema lens.
 
 ### Accuracy: calibrate the phone once
 

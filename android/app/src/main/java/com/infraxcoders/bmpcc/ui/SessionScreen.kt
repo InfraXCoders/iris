@@ -41,6 +41,10 @@ import com.infraxcoders.bmpcc.core.NotesSorter
 import com.infraxcoders.bmpcc.core.RecceNote
 import com.infraxcoders.bmpcc.data.RecceStore
 import com.infraxcoders.bmpcc.platform.Locator
+import com.infraxcoders.bmpcc.platform.Places
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import com.infraxcoders.bmpcc.platform.rememberPermissionAsker
 import com.infraxcoders.bmpcc.platform.share
 import com.infraxcoders.bmpcc.report.ReportPdf
@@ -57,6 +61,21 @@ fun SessionScreen(nav: Navigator, sessionId: String) {
     var showNote by remember { mutableStateOf(false) }
     var shareError by remember { mutableStateOf<String?>(null) }
     val asker = rememberPermissionAsker { locating = "Location access is off." }
+    var placeSuggestion by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    /** Place name from GPS: fills an unnamed location, otherwise offers it. */
+    fun lookUpPlace(lat: Double, lon: Double) {
+        locating = "Looking up the place…"
+        scope.launch {
+            val name = Places.name(context, lat, lon)
+            locating = if (name == null) "Couldn't find a place name (needs internet)." else null
+            if (name != null) {
+                val current = RecceStore.session(sessionId)?.locationName?.trim().orEmpty()
+                if (current.isEmpty() || current == "Location") RecceStore.update(sessionId) { it.copy(locationName = name) }
+                else placeSuggestion = name
+            }
+        }
+    }
 
     Screen(s.projectName, onBack = { nav.pop() }) { pad ->
         LazyColumn(contentPadding = pad) {
@@ -84,10 +103,25 @@ fun SessionScreen(nav: Navigator, sessionId: String) {
                                     if (loc != null) {
                                         RecceStore.update(sessionId) { it.copy(latitude = loc.latitude, longitude = loc.longitude) }
                                         locating = null
+                                        lookUpPlace(loc.latitude, loc.longitude)
                                     } else locating = err
                                 }
                             }
                         }) { Text("Use my location") }
+                    }
+                    val lat = s.latitude; val lon = s.longitude
+                    if (lat != null && lon != null) {
+                        placeSuggestion?.let { name ->
+                            if (name != s.locationName) Row(Modifier.cardRow().padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Near: $name", color = Color.LightGray, modifier = Modifier.weight(1f))
+                                TextButton({ RecceStore.update(sessionId) { it.copy(locationName = name) }; placeSuggestion = null }) { Text("Use as name") }
+                            }
+                        }
+                        Row(Modifier.cardRow().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton({ nav.push(Dest.RecceMap(sessionId)) }) { Text("Show on map") }
+                            TextButton({ if (!Places.openInMaps(context, lat, lon, s.projectName)) locating = "No maps app on this phone." }) { Text("Directions") }
+                            TextButton({ lookUpPlace(lat, lon) }) { Text("Place name") }
+                        }
                     }
                 }
             }

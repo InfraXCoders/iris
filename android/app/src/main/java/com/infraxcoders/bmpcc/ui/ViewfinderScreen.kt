@@ -48,6 +48,8 @@ import com.infraxcoders.bmpcc.core.ScopeKind
 import com.infraxcoders.bmpcc.core.Scopes
 import com.infraxcoders.bmpcc.core.Zebra
 import com.infraxcoders.bmpcc.data.Settings
+import com.infraxcoders.bmpcc.data.PhoneExposure
+import com.infraxcoders.bmpcc.core.ExposureMatch
 import androidx.compose.runtime.SideEffect
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -184,6 +186,37 @@ class PhoneCamera {
     var evStep = 0.0
     var evMin = 0
     var evMax = 0
+    /** Manual ISO / exposure time (Camera2 MANUAL_SENSOR), for matching the cinema camera's exposure. */
+    var manualSupported by mutableStateOf(false)
+    var isoMin = 0; var isoMax = 0
+    var exposureMinNs = 0L; var exposureMaxNs = 0L
+    var phoneAperture = 1.8
+    private var awbMode = CaptureRequest.CONTROL_AWB_MODE_AUTO
+    private var manual: ExposureMatch.Phone? = null
+
+    /** Sends white balance and (when matching) manual exposure together: Camera2 options replace each other. */
+    @OptIn(ExperimentalCamera2Interop::class)
+    private fun pushOptions() {
+        val c = camera ?: return
+        runCatching {
+            val b = CaptureRequestOptions.Builder().setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, awbMode)
+            manual?.let { m ->
+                b.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                b.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, m.iso)
+                b.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, m.exposureNs)
+                b.setCaptureRequestOption(CaptureRequest.SENSOR_FRAME_DURATION, max(m.exposureNs, 33_333_333L))
+            }
+            Camera2CameraControl.from(c.cameraControl).setCaptureRequestOptions(b.build())
+        }
+    }
+
+    /** Manual exposure (null = back to auto-exposure). */
+    fun applyManual(m: ExposureMatch.Phone?) {
+        if (m == manual) return
+        manual = m
+        if (m != null) camera?.cameraControl?.setExposureCompensationIndex(0)
+        pushOptions()
+    }
 
     fun applyZoom(z: Double) {
         val c = camera ?: return
@@ -199,21 +232,15 @@ class PhoneCamera {
     }
 
     /** White balance preset nearest to a colour temperature in Kelvin. */
-    @OptIn(ExperimentalCamera2Interop::class)
     fun applyWhiteBalance(kelvin: Int?) {
-        val c = camera ?: return
-        val mode = when {
+        awbMode = when {
             kelvin == null -> CaptureRequest.CONTROL_AWB_MODE_AUTO
             kelvin < 3600 -> CaptureRequest.CONTROL_AWB_MODE_INCANDESCENT
             kelvin < 4700 -> CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT
             kelvin < 6000 -> CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT
             else -> CaptureRequest.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT
         }
-        runCatching {
-            Camera2CameraControl.from(c.cameraControl).setCaptureRequestOptions(
-                CaptureRequestOptions.Builder().setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, mode).build(),
-            )
-        }
+        pushOptions()
     }
 
     @OptIn(ExperimentalCamera2Interop::class)
@@ -224,6 +251,17 @@ class PhoneCamera {
             val pixels = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
             val active = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
             val focal = info.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.minOrNull()
+            val caps = info.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            val isoRange = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+            val timeRange = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+            info.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)?.firstOrNull()?.let { if (it > 0) phoneAperture = it.toDouble() }
+            if (caps != null && isoRange != null && timeRange != null &&
+                caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)
+            ) {
+                isoMin = isoRange.lower; isoMax = isoRange.upper
+                exposureMinNs = timeRange.lower; exposureMaxNs = timeRange.upper
+                manualSupported = isoMax > isoMin && exposureMaxNs > exposureMinNs
+            }
             if (physical != null && pixels != null && active != null && focal != null && focal > 0) {
                 val activeW = physical.width * active.width().toDouble() / pixels.width
                 val activeH = physical.height * active.height().toDouble() / pixels.height
@@ -320,7 +358,6 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     val asker = rememberPermissionAsker { phone.error = "Camera access is off. Allow it in the phone's settings to use the viewfinder." }
     var locked by remember { mutableStateOf(false) }
     var surroundings by remember { mutableStateOf(false) }
-    var exposurePreview by remember { mutableStateOf(true) }
     var showThirds by remember { mutableStateOf(true) }
     var showCentre by remember { mutableStateOf(false) }
     var showSafe by remember { mutableStateOf(false) }
@@ -375,7 +412,15 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     // The lens data drives the phone: zoom, exposure, white balance.
     LaunchedEffect(layout?.zoom, phone.camera, locked) { if (!locked) layout?.let { phone.applyZoom(it.zoom) } }
     val ev = Exposure.ev(shot.iso, shot.shutter, shot.nd, shot.aperture)
-    LaunchedEffect(ev, exposurePreview, phone.camera) { phone.applyExposure(if (exposurePreview) ev else 0.0) }
+    val exposureMode = Settings.phoneExposure
+    val match = if (exposureMode == PhoneExposure.MATCH && phone.manualSupported) {
+        ExposureMatch.target(shot.iso, shot.shutter, shot.fps, shot.nd, shot.aperture, phone.phoneAperture)
+            ?.let { ExposureMatch.phone(it, phone.isoMin, phone.isoMax, phone.exposureMinNs, phone.exposureMaxNs, ExposureMatch.exposureSeconds(shot.shutter, shot.fps)) }
+    } else null
+    LaunchedEffect(ev, exposureMode, match, phone.camera) {
+        phone.applyManual(match)
+        if (match == null) phone.applyExposure(if (exposureMode != PhoneExposure.OFF) ev else 0.0)
+    }
     val kelvin = shot.whiteBalance.filter { it.isDigit() }.toIntOrNull()
     LaunchedEffect(kelvin, phone.camera) { phone.applyWhiteBalance(kelvin) }
 
@@ -418,14 +463,20 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         val scopeKind = Settings.scope
         val scopes = remember { ScopeAnalyzer(ContextCompat.getMainExecutor(context)) }
         val scopeCrop = Scopes.crop(layout?.frame, video)
+        // Phones without GPU picture tools (Android 12 and older, or a shader failure): a lower-resolution CPU picture.
+        val cpuPicture = hasCamera && (lut != null || tools.any) && !(PictureEffect.supported && PictureEffect.working)
+        val splitFraction = if (lutCompare && lut != null && video.width > 0) (lutSplit * w - video.x) / video.width else 0.0
         SideEffect {
             scopes.kind = scopeKind; scopes.lut = lut; scopes.input = lutInput; scopes.crop = scopeCrop
+            scopes.pictureOn = cpuPicture; scopes.tools = tools; scopes.splitFraction = splitFraction
         }
+        LaunchedEffect(cpuPicture) { if (!cpuPicture) scopes.clearPicture() }
         LaunchedEffect(scopeKind) { scopes.clear() }
         if (hasCamera) CameraPreview(
             context, lifecycleOwner, phone, rotation, lut, lutInput, if (lutCompare && lut != null) lutSplit * w.toFloat() else null,
-            tools, scopes, scopeKind,
+            tools, scopes, scopeKind, cpuPicture,
         )
+        if (cpuPicture) CpuPicture(scopes, video)
         MonitorOverlay(
             layout?.frame, layout?.lines, shot.markers, showThirds, showCentre, showSafe,
             maskAlpha = if (surroundings) 0.45f else 0.82f,
@@ -466,7 +517,7 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         )
 
         // Above the frame overlays, so it gets the drags.
-        if (lutCompare && lut != null && PictureEffect.supported && w > 0) SplitHandle(lutSplit, w.toFloat()) { lutSplit = it }
+        if (lutCompare && lut != null && w > 0) SplitHandle(lutSplit, w.toFloat()) { lutSplit = it }
 
         // ── Top: camera, focal length and view (plus exposure in landscape), frame ──
         Row(
@@ -508,10 +559,7 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
             Modifier.align(Alignment.TopCenter).padding(top = if (landscape) 76.dp else 96.dp, start = if (landscape) 110.dp else 24.dp, end = if (landscape) 110.dp else 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (link) Pill(
-                (if (CameraLink.recording) "● REC  " else "● ") + (CameraLink.timecode ?: "Camera connected"), mono = true,
-                color = if (CameraLink.recording) Brand.record else Color(0x99000000), textColor = Color.White,
-            ) { CameraLink.record(!CameraLink.recording) }
+            if (link) RecordPill()
             warn?.let { VfPill(it, Color(0xCC8A3A00)) }
             flash?.let { VfPill(it, Color(0xCC1E6B2E)) }
             markerType?.let { VfPill("Tap inside the frame to place: ${it.label}", Color(0xCC000000)) }
@@ -519,12 +567,15 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
                 "Phone not calibrated: frame lines can be a few % off. Calibrate ›", modifier = Modifier.padding(top = 6.dp),
                 color = Color(0xCC000000), textColor = Color.White,
             ) { calibrationNote = false; nav.push(Dest.Calibrate) }
-            val liveWanted = lut != null || tools.any
-            val savedNote = if (lut != null) " The LUT is applied to saved frames." else ""
-            if (liveWanted && !PictureEffect.supported) VfPill("Live LUT, false colour, zebras and peaking need Android 13 or newer.$savedNote", Color(0xCC000000))
-            else if (liveWanted && !PictureEffect.working) VfPill("Live picture tools aren't available on this phone's graphics.$savedNote", Color(0xCC000000))
-            if (scopeKind != ScopeKind.NONE && !scopes.available) VfPill("This phone can't run a scope next to the camera picture.", Color(0xCC000000))
-            if (tools.falseColour && PictureEffect.supported && PictureEffect.working) FalseColourLegend()
+            if (cpuPicture && scopes.available) VfPill("Reduced-quality live preview (full quality needs Android 13+ graphics).", Color(0xCC000000))
+            if ((scopeKind != ScopeKind.NONE || cpuPicture) && !scopes.available)
+                VfPill("This phone can't run the scopes or picture tools next to the camera picture." +
+                    (if (lut != null) " The LUT is applied to saved frames." else ""), Color(0xCC000000))
+            match?.let { m ->
+                if (m.stopsOff > 0.5) VfPill(fmt("Phone picture %.1f stops darker than the real exposure (phone's limit).", m.stopsOff), Color(0xCC000000))
+                else if (m.stopsOff < -0.5) VfPill(fmt("Phone picture %.1f stops brighter than the real exposure (phone's limit).", -m.stopsOff), Color(0xCC000000))
+            }
+            if (tools.falseColour) FalseColourLegend()
         }
 
         // Pieces used in both layouts.
@@ -703,7 +754,10 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         title = "Setup", subtitle = "Camera, lens and frame for shot ${shot.shotNumber}.", button = "Apply",
         initial = RecceChoice.of(shot), onDismiss = { setup = false },
     ) { c -> edit { c.applyTo(it) }; setup = false }
-    if (exposureSheet) ExposureSheet(shot, exposurePreview, { exposurePreview = it }, ::edit, { flash = it }) { exposureSheet = false }
+    if (exposureSheet) ExposureSheet(
+        shot, exposureMode, phone.manualSupported,
+        match?.let { fmt("Phone set to ISO %d · 1/%.0f s", it.iso, 1e9 / it.exposureNs) }, ::edit, { flash = it },
+    ) { exposureSheet = false }
     if (notes) NoteComposer(sessionId, shotId) { notes = false }
     if (distortionDialog && reference != null) DistortionDialog(
         current = if (Distortion.isCustom(lens)) ShotOptics.distortionPercent(shot) else null,
@@ -863,7 +917,7 @@ private fun Thumbnail(ref: ShotReference?, onClick: () -> Unit) {
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExposureSheet(
-    shot: RecceShot, exposurePreview: Boolean, onExposurePreview: (Boolean) -> Unit,
+    shot: RecceShot, exposureMode: PhoneExposure, manualSupported: Boolean, matchInfo: String?,
     edit: ((RecceShot) -> RecceShot) -> Unit, onNote: (String) -> Unit, onDismiss: () -> Unit,
 ) {
     val link = CameraLink.isConnected
@@ -907,13 +961,19 @@ private fun ExposureSheet(
             if (modes.size > 1) ChipLine("Recording mode", shot.sensorMode.name, modes.map { it.name }) { name ->
                 modes.firstOrNull { it.name == name }?.let { m -> edit { it.copy(sensorModeId = m.id) } }
             }
-            Row(Modifier.fillMaxWidth().clickable { onExposurePreview(!exposurePreview) }.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Preview exposure on the phone", fontSize = 15.sp, color = Brand.ink)
-                    Text("Brighter or darker with ISO, shutter, ND and iris", fontSize = 12.sp, color = Color(0xFF5B6B8C))
-                }
-                Switch(exposurePreview, onExposurePreview, colors = SwitchDefaults.colors(checkedTrackColor = Brand.accent))
+            Text("Phone picture exposure", fontSize = 15.sp, color = Brand.ink, modifier = Modifier.padding(top = 14.dp))
+            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                PhoneExposure.entries.forEach { m -> ChoiceChip(m.label, m == exposureMode) { Settings.choosePhoneExposure(m) } }
             }
+            Text(
+                exposureMode.detail + when {
+                    exposureMode == PhoneExposure.MATCH && !manualSupported -> " This phone doesn't allow manual exposure, so it follows instead."
+                    exposureMode == PhoneExposure.MATCH && matchInfo != null -> "\n$matchInfo."
+                    exposureMode == PhoneExposure.MATCH -> " Needs ISO, shutter, frame rate and iris set."
+                    else -> ""
+                },
+                fontSize = 12.sp, color = Color(0xFF5B6B8C), modifier = Modifier.padding(top = 4.dp),
+            )
         }
     }
 }
@@ -953,6 +1013,7 @@ internal fun CameraPreview(
     context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner, phone: PhoneCamera, rotation: Int,
     lut: Lut3D? = null, lutInput: LutInput = LutInput.REC709, splitPx: Float? = null,
     tools: PictureTools = PictureTools(), scopes: ScopeAnalyzer? = null, scopeKind: ScopeKind = ScopeKind.NONE,
+    pictureOn: Boolean = false,
 ) {
     val previewView = remember {
         PreviewView(context).apply {
@@ -962,7 +1023,7 @@ internal fun CameraPreview(
     }
     // Re-bound when the screen turns, so the picture and photos have the right orientation.
     // The scope stream is only bound while a scope is shown (rebinding blinks the picture once).
-    val scopeOn = scopes != null && scopeKind != ScopeKind.NONE
+    val scopeOn = scopes != null && (scopeKind != ScopeKind.NONE || pictureOn)
     DisposableEffect(lifecycleOwner, rotation, scopeOn) {
         val future = ProcessCameraProvider.getInstance(context)
         var provider: ProcessCameraProvider? = null
@@ -1034,6 +1095,26 @@ private fun DistortionDialog(current: Double?, lensName: String, focal: String, 
             }
         },
     )
+}
+
+/** Record / timecode from the connected camera; reads the timecode here so only this pill redraws as it runs. */
+@Composable
+private fun RecordPill() = Pill(
+    (if (CameraLink.recording) "● REC  " else "● ") + (CameraLink.timecode ?: "Camera connected"), mono = true,
+    color = if (CameraLink.recording) Brand.record else Color(0x99000000), textColor = Color.White,
+) { CameraLink.record(!CameraLink.recording) }
+
+/** The CPU-processed picture over the camera picture, where the camera picture is drawn ([video]). */
+@Composable
+private fun CpuPicture(scopes: ScopeAnalyzer, video: ScreenRect) {
+    val bmp = scopes.picture ?: return
+    val img = remember(bmp, bmp.generationId) { bmp.asImageBitmap() }
+    Canvas(Modifier.fillMaxSize()) {
+        drawImage(
+            img, dstOffset = androidx.compose.ui.unit.IntOffset(video.x.toInt(), video.y.toInt()),
+            dstSize = IntSize(video.width.toInt(), video.height.toInt()),
+        )
+    }
 }
 
 /** The false colour key: band colours and their levels (ARRI's published bands). */

@@ -153,6 +153,14 @@ object RecceStore {
         text.split(Regex("[^A-Za-z0-9]+")).filter { it.isNotEmpty() }.joinToString("-").ifEmpty { "Recce" }
 }
 
+/** The phone picture's exposure: its own auto-exposure, auto shifted by the shot's stops, or set to match the shot. */
+enum class PhoneExposure(val label: String, val detail: String) {
+    OFF("Phone auto", "The phone exposes on its own."),
+    FOLLOW("Follow", "The phone's auto-exposure, made brighter or darker by the shot's ISO, shutter, ND and iris."),
+    MATCH("Match exactly", "The phone's ISO and shutter are set so its picture gets the same exposure as the cinema camera. " +
+        "Best for false colour, zebras and scopes. Approximate: phone and camera ISO and tone differ."),
+}
+
 /** A saved camera + lens combination, e.g. "A-cam: 6K Pro + Orion set". */
 data class Kit(val name: String, val cameraId: String, val modeId: String, val lensId: String, val focal: Double, val aspect: String)
 
@@ -184,6 +192,8 @@ object Settings {
     var distortionVersion by mutableStateOf(0); private set
     /** Cloud forecast turned on (it sends the location to Open-Meteo). */
     var weatherOn by mutableStateOf(false); private set
+    /** How the phone's picture follows the shot's exposure (ISO, shutter, ND, iris). */
+    var phoneExposure by mutableStateOf(PhoneExposure.MATCH); private set
 
     fun init(context: Context) {
         p = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
@@ -203,6 +213,7 @@ object Settings {
         peakingLevel = PeakingLevel.of(p.getString("peakingLevel", null))
         scope = ScopeKind.of(p.getString("scope", null))
         weatherOn = p.getBoolean("weatherOn", false)
+        phoneExposure = PhoneExposure.entries.firstOrNull { it.name == p.getString("phoneExposure", null) } ?: PhoneExposure.MATCH
         loadDistortion()
         kits = (p.getString("kits", null) ?: "").lines().mapNotNull { line ->
             val f = line.split('\t')
@@ -233,6 +244,7 @@ object Settings {
     fun choosePeaking(on: Boolean) { peaking = on; p.edit().putBoolean("peaking", on).apply() }
     fun choosePeakingColour(c: PeakingColour) { peakingColour = c; p.edit().putString("peakingColour", c.name).apply() }
     fun choosePeakingLevel(l: PeakingLevel) { peakingLevel = l; p.edit().putString("peakingLevel", l.name).apply() }
+    fun choosePhoneExposure(m: PhoneExposure) { phoneExposure = m; p.edit().putString("phoneExposure", m.name).apply() }
     fun chooseWeather(on: Boolean) { weatherOn = on; p.edit().putBoolean("weatherOn", on).apply() }
 
     // The user's own distortion measurements: one line per lens and focal length, "lensId<TAB>focal<TAB>k1".

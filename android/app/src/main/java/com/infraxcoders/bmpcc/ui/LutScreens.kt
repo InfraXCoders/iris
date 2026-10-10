@@ -74,9 +74,9 @@ fun LutLibraryScreen(nav: Navigator) {
                 message?.let { Hint(it) }
                 Hint(
                     "Monitoring preview only: the LUT is applied to the phone's camera picture on screen, not through a colour-managed " +
-                        "pipeline. Log LUTs (e.g. Blackmagic Film Gen 5 → Rec.709) get an approximate log version of the phone picture: " +
-                        "tone only, no gamut conversion, and highlights won't match a real BRAW recording." +
-                        if (PictureEffect.supported) "" else " Live LUT on the camera picture needs Android 13 or newer; on this phone LUTs are applied to saved frames.",
+                        "pipeline. Log LUTs (e.g. Blackmagic Film Gen 5 → Rec.709) get an approximate log version of the phone picture " +
+                        "(Gen 5 curve and Blackmagic Wide Gamut), but the phone's own range and tone-mapping remain, so highlights won't match a real BRAW recording." +
+                        if (PictureEffect.supported) "" else " On this phone (Android 12 or older) the live LUT runs at reduced resolution.",
                 )
             }
             section("Looks") {

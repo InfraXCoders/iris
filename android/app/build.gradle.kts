@@ -84,6 +84,8 @@ dependencies {
     implementation(libs.camera.lifecycle)
     implementation(libs.camera.view)
     implementation(libs.androidx.exifinterface)
+    // OpenStreetMap map of recce locations (free; tiles need internet).
+    implementation(libs.osmdroid)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
 }
