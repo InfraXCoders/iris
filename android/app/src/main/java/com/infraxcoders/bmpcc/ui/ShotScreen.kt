@@ -128,7 +128,7 @@ fun ShotScreen(nav: Navigator, sessionId: String, sceneId: String, shotId: Strin
             }
             if (shot.markers.isNotEmpty()) section("Markers") {
                 items(shot.markers, key = { it.id }) { m ->
-                    Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.cardRow().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("${m.type.label}  (${(m.x * 100).toInt()}%, ${(m.y * 100).toInt()}%)", modifier = Modifier.weight(1f))
                         IconButton({ edit { s -> s.copy(markers = s.markers.filter { it.id != m.id }) } }) { Icon(Icons.Filled.Delete, "Delete marker", tint = Color.Gray) }
                     }
@@ -200,7 +200,7 @@ private fun FramingRows(shot: RecceShot, nav: Navigator) {
 @Composable
 fun ReferencePhoto(r: ShotReference, onDelete: (() -> Unit)? = null) {
     val bmp = Images.load(File(RecceStore.referencesDir, r.fileName))
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+    Column(Modifier.cardRow().padding(horizontal = 12.dp, vertical = 8.dp)) {
         if (bmp != null) {
             Box(Modifier.fillMaxWidth().aspectRatio(bmp.width.toFloat() / bmp.height).clip(RoundedCornerShape(6.dp))) {
                 Image(bmp.asImageBitmap(), null, contentScale = ContentScale.Fit, modifier = Modifier.matchParentSize())
@@ -219,5 +219,5 @@ fun ReferencePhoto(r: ShotReference, onDelete: (() -> Unit)? = null) {
             if (onDelete != null) IconButton(onDelete) { Icon(Icons.Filled.Delete, "Delete photo", tint = Color.Gray) }
         }
     }
-    HorizontalDivider(color = Color(0x22FFFFFF))
+    RowDivider()
 }

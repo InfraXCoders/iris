@@ -126,21 +126,29 @@ public enum Catalog {
         return .pl
     }
 
-    /// Lens rows: id, manufacturer, series, focal_mm, t_stop, squeeze, close_focus_m, image_circle_mm,
-    /// length_mm, weight_g, front_diameter_mm, mounts, format, source_url, notes.
+    /// Lens rows: id, manufacturer, series, focal_mm, focal_max_mm (zooms), t_stop, f_stop (photo lenses), squeeze,
+    /// close_focus_m, image_circle_mm, length_mm, weight_g, front_diameter_mm, mounts, format, source_url, notes.
     public static func loadLenses(_ csv: String) -> [LensProfile] {
         CSV.records(csv).compactMap { r in
             guard let id = r["id"], !id.isEmpty, let focal = num(r["focal_mm"]), focal > 0 else { return nil }
+            var focalMax = focal
+            if let m = num(r["focal_max_mm"]), m > focal { focalMax = m }
+            let zoom = focalMax > focal
             let squeeze = num(r["squeeze"]) ?? 1
             let t = num(r["t_stop"]) ?? 0
+            let f = num(r["f_stop"]) ?? 0
             let series = r["series"] ?? ""
             let mounts = (r["mounts"] ?? "").split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-            let tText = t > 0 ? " T\(ShotPresets.apertureNumber(t))" : ""
+            // Cine lenses publish T-stops, photo lenses f-numbers; the name says which.
+            let stopText = t > 0 ? " T\(ShotPresets.apertureNumber(t))" : (f > 0 ? " f/\(String(format: "%g", f))" : "")
+            let focalText = zoom ? "\(String(format: "%g", focal))-\(ShotPresets.focalText(focalMax))" : ShotPresets.focalText(focal)
+            let type: LensType = zoom ? .zoom : (squeeze > 1 ? .anamorphic : .prime)
             return LensProfile(
-                id: id, manufacturer: r["manufacturer"] ?? "", model: "\(series) \(ShotPresets.focalText(focal))\(tText)",
-                mount: mount(from: mounts), lensType: squeeze > 1 ? .anamorphic : .prime,
-                focalLengthMin: focal, focalLengthMax: focal, availableFocalLengths: [focal],
-                maximumAperture: t, minimumFocusDistance: num(r["close_focus_m"]) ?? 0, anamorphicSqueeze: squeeze,
+                id: id, manufacturer: r["manufacturer"] ?? "",
+                model: "\(series) \(focalText)\(stopText)".trimmingCharacters(in: .whitespaces),
+                mount: mount(from: mounts), lensType: type,
+                focalLengthMin: focal, focalLengthMax: focalMax, availableFocalLengths: zoom ? [focal, focalMax] : [focal],
+                maximumAperture: t > 0 ? t : f, minimumFocusDistance: num(r["close_focus_m"]) ?? 0, anamorphicSqueeze: squeeze,
                 imageCircleMm: num(r["image_circle_mm"]) ?? 0, verificationStatus: .reference,
                 series: series.isEmpty ? nil : series, lengthMm: num(r["length_mm"]), weightG: num(r["weight_g"]),
                 frontDiameterMm: num(r["front_diameter_mm"]), mountNames: mounts.isEmpty ? nil : mounts,

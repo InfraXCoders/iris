@@ -201,7 +201,7 @@ private fun MenuChip(label: String, active: Boolean, options: List<Pair<String, 
 @Composable
 private fun LensRow(l: LensProfile, camera: CameraProfile, favs: Set<String>, nav: Navigator, dest: Dest.Library) {
     Row(
-        Modifier.fillMaxWidth().clickable {
+        Modifier.cardRow().clickable {
             val pick = dest.pickLens
             if (pick != null) { pick(l); nav.pop() } else nav.push(Dest.LensInfo(l.id))
         }.padding(start = 16.dp, top = 8.dp, bottom = 8.dp),
@@ -221,7 +221,7 @@ private fun LensRow(l: LensProfile, camera: CameraProfile, favs: Set<String>, na
             Icon(if (l.id in favs) Icons.Filled.Star else Icons.Filled.StarBorder, "Favourite", tint = if (l.id in favs) Color(0xFFFFCC00) else Color.Gray)
         }
     }
-    HorizontalDivider(color = Color(0x22FFFFFF))
+    RowDivider()
 }
 
 private fun lensDetails(l: LensProfile): String = buildList {
@@ -237,7 +237,7 @@ fun rangeText(l: LensProfile): String =
 @Composable
 private fun CameraRow(c: CameraProfile, favs: Set<String>, nav: Navigator, dest: Dest.Library) {
     Row(
-        Modifier.fillMaxWidth().clickable {
+        Modifier.cardRow().clickable {
             val pick = dest.pickCamera
             if (pick != null) { pick(c); nav.pop() } else nav.push(Dest.CameraInfo(c.id))
         }.padding(start = 16.dp, top = 8.dp, bottom = 8.dp),
@@ -256,7 +256,7 @@ private fun CameraRow(c: CameraProfile, favs: Set<String>, nav: Navigator, dest:
             Icon(if (c.id in favs) Icons.Filled.Star else Icons.Filled.StarBorder, "Favourite", tint = if (c.id in favs) Color(0xFFFFCC00) else Color.Gray)
         }
     }
-    HorizontalDivider(color = Color(0x22FFFFFF))
+    RowDivider()
 }
 
 private fun feetInches(m: Double): String {
@@ -301,7 +301,7 @@ fun LensDetailScreen(nav: Navigator, lensId: String) {
                 "The maker doesn't publish this lens's image circle, so coverage uses a typical value for ${l.format ?: "its format"}. Test before the shoot." else null) {
                 items(camera.sensorModes, key = { it.id }) { m ->
                     val c = Coverage.evaluate(l, m)
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.cardRow().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(m.name)
                             Framing.reference(camera.using(m.id), l, l.focalLengthMin)?.let { r ->
@@ -312,7 +312,7 @@ fun LensDetailScreen(nav: Navigator, lensId: String) {
                         Spacer(Modifier.width(6.dp))
                         CoverageBadge(c, Coverage.circle(l)?.nominal ?: false)
                     }
-                    HorizontalDivider(color = Color(0x22FFFFFF))
+                    RowDivider()
                 }
                 item {
                     if (!Coverage.sharesMount(camera, l)) Hint("Different mount: needs an adapter, if one exists for ${l.allMountNames.joinToString("/")} → ${camera.allMountNames.joinToString("/")}.")
@@ -357,14 +357,14 @@ fun CameraDetailScreen(nav: Navigator, cameraId: String) {
             }
             section("Recording modes", footer = "Sensor area each mode uses. The badge shows whether ${lens.displayName} covers it.") {
                 items(c.sensorModes, key = { it.id }) { m ->
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.cardRow().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(m.name)
                             MonoText(listOfNotNull(m.sizeText, m.resolutionText).joinToString(" · "), Color.Gray)
                         }
                         CoverageBadge(Coverage.evaluate(lens, m), Coverage.circle(lens)?.nominal ?: false)
                     }
-                    HorizontalDivider(color = Color(0x22FFFFFF))
+                    RowDivider()
                 }
             }
             item {

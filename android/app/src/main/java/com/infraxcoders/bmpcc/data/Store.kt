@@ -99,20 +99,20 @@ object RecceStore {
         return scene
     }
 
-    fun newShot(sessionId: String, sceneId: String, camera: CameraProfile, lens: LensProfile): RecceShot? {
+    fun newShot(sessionId: String, sceneId: String, camera: CameraProfile, lens: LensProfile, modeId: String? = null): RecceShot? {
         val s = session(sessionId) ?: return null
         val scene = s.scenes.firstOrNull { it.id == sceneId } ?: return null
         val next = (scene.shots.mapNotNull { it.shotNumber.toIntOrNull() }.maxOrNull() ?: 0) + 1
-        val shot = RecceShot.create(sceneId, "$next", camera, lens)
+        val shot = RecceShot.create(sceneId, "$next", camera, lens).copy(sensorModeId = modeId)
         updateScene(sessionId, sceneId) { it.copy(shots = it.shots + shot) }
         return shot
     }
 
     /** "Quick recce": one session/scene/shot ready for the viewfinder. Returns (sessionId, sceneId, shotId). */
-    fun quickRecceShot(camera: CameraProfile, lens: LensProfile): Triple<String, String, String> {
+    fun quickRecceShot(camera: CameraProfile, lens: LensProfile, modeId: String? = null): Triple<String, String, String> {
         val s = _sessions.value.firstOrNull { it.projectName == "Quick Recce" } ?: newSession("Quick Recce", "Location scouting")
         val scene = session(s.id)!!.sortedScenes.firstOrNull() ?: newScene(s.id)!!
-        val shot = newShot(s.id, scene.id, camera, lens)!!
+        val shot = newShot(s.id, scene.id, camera, lens, modeId)!!
         return Triple(s.id, scene.id, shot.id)
     }
 
@@ -148,6 +148,9 @@ object RecceStore {
         text.split(Regex("[^A-Za-z0-9]+")).filter { it.isNotEmpty() }.joinToString("-").ifEmpty { "Recce" }
 }
 
+/** A saved camera + lens combination, e.g. "A-cam: 6K Pro + Orion set". */
+data class Kit(val name: String, val cameraId: String, val modeId: String, val lensId: String, val focal: Double, val aspect: String)
+
 /** Choices remembered between launches, as Compose state so screens update when they change. */
 object Settings {
     private lateinit var p: SharedPreferences
@@ -157,6 +160,12 @@ object Settings {
     var favoriteCameras by mutableStateOf(emptySet<String>()); private set
     var favoriteLenses by mutableStateOf(emptySet<String>()); private set
     var noteLanguage by mutableStateOf("en-IN"); private set
+    /** Frame (aspect ratio) last chosen in the New recce sheet. */
+    var defaultAspect by mutableStateOf("2.39:1"); private set
+    var defaultModeId by mutableStateOf<String?>(null); private set
+    /** Measured angle of view across the long side of this phone's camera picture (degrees), or null to trust the phone. */
+    var fovCalibration by mutableStateOf<Double?>(null); private set
+    var kits by mutableStateOf<List<Kit>>(emptyList()); private set
 
     fun init(context: Context) {
         p = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
@@ -165,10 +174,36 @@ object Settings {
         favoriteCameras = p.getStringSet("favoriteCameras", emptySet())?.toSet() ?: emptySet()
         favoriteLenses = p.getStringSet("favoriteLenses", emptySet())?.toSet() ?: emptySet()
         noteLanguage = p.getString("noteLanguage", null) ?: "en-IN"
+        defaultAspect = p.getString("defaultAspect", null) ?: "2.39:1"
+        defaultModeId = p.getString("defaultModeId", null)
+        fovCalibration = p.getFloat("fovCalibration", 0f).takeIf { it > 0f }?.toDouble()
+        kits = (p.getString("kits", null) ?: "").lines().mapNotNull { line ->
+            val f = line.split('\t')
+            if (f.size < 6) null else Kit(f[0], f[1], f[2], f[3], f[4].toDoubleOrNull() ?: 35.0, f[5])
+        }
     }
 
     fun setDefaultCamera(id: String) { defaultCameraId = id; p.edit().putString("defaultCameraId", id).apply() }
     fun setDefaultLens(id: String) { defaultLensId = id; p.edit().putString("defaultLensId", id).apply() }
+    /** Adds a kit (a kit with the same name is replaced). */
+    fun addKit(k: Kit) {
+        val clean = k.copy(name = k.name.replace('\t', ' ').replace('\n', ' ').trim().ifEmpty { "Kit" })
+        storeKits(kits.filter { it.name != clean.name } + clean)
+    }
+    fun removeKit(name: String) = storeKits(kits.filter { it.name != name })
+    private fun storeKits(list: List<Kit>) {
+        kits = list
+        p.edit().putString("kits", list.joinToString("\n") { listOf(it.name, it.cameraId, it.modeId, it.lensId, "${it.focal}", it.aspect).joinToString("\t") }).apply()
+    }
+
+    fun saveFovCalibration(v: Double?) {
+        fovCalibration = v
+        p.edit().apply { if (v == null) remove("fovCalibration") else putFloat("fovCalibration", v.toFloat()) }.apply()
+    }
+    fun chooseDefaultAspect(a: String) { defaultAspect = a; p.edit().putString("defaultAspect", a).apply() }
+    fun chooseDefaultMode(id: String?) { defaultModeId = id; p.edit().putString("defaultModeId", id).apply() }
+    /** True once a lens has been picked on this phone (otherwise a quick recce starts with the generic prime set). */
+    val lensChosen: Boolean get() = p.contains("defaultLensId")
     fun chooseNoteLanguage(id: String) { noteLanguage = id; p.edit().putString("noteLanguage", id).apply() }
     fun toggleFavoriteCamera(id: String) {
         favoriteCameras = if (id in favoriteCameras) favoriteCameras - id else favoriteCameras + id

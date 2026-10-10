@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -29,6 +30,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,6 +42,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import com.infraxcoders.bmpcc.core.LightingCondition
 import com.infraxcoders.bmpcc.core.RecceShot
+import com.infraxcoders.bmpcc.core.ShotPresets
 import com.infraxcoders.bmpcc.data.RecceStore
 import com.infraxcoders.bmpcc.data.Settings
 import com.infraxcoders.bmpcc.platform.Images
@@ -49,6 +54,17 @@ fun SceneScreen(nav: Navigator, sessionId: String, sceneId: String) {
     val scene = sessions.firstOrNull { it.id == sessionId }?.scenes?.firstOrNull { it.id == sceneId } ?: return Gone(nav)
     fun edit(change: (com.infraxcoders.bmpcc.core.RecceScene) -> com.infraxcoders.bmpcc.core.RecceScene) =
         RecceStore.updateScene(sessionId, sceneId, change)
+    var picking by remember { mutableStateOf(false) }
+    if (picking) RecceSheet(
+        title = "Add shot", subtitle = "Scene ${scene.sceneNumber}: pick camera, lens and frame.", button = "Open viewfinder",
+        initial = remember { RecceChoice.last() }, onDismiss = { picking = false },
+    ) { c ->
+        picking = false
+        RecceStore.newShot(sessionId, sceneId, c.camera, c.lens, c.modeId)?.let { shot ->
+            RecceStore.updateShot(sessionId, sceneId, shot.id) { it.copy(focalLength = ShotPresets.focalText(c.focal), aspectRatio = c.aspect) }
+            nav.push(Dest.Finder(sessionId, sceneId, shot.id))
+        }
+    }
 
     Screen("Scene ${scene.sceneNumber}", onBack = { nav.pop() }) { pad ->
         LazyColumn(contentPadding = pad) {
@@ -75,8 +91,11 @@ fun SceneScreen(nav: Navigator, sessionId: String, sceneId: String) {
                         onDelete = { edit { sc -> sc.copy(shots = sc.shots.filter { it.id != shot.id }) } })
                 }
                 item {
-                    ActionRow(Icons.Filled.Add, "Add shot", "${Settings.defaultCamera.model} · ${Settings.defaultLens.model}") {
-                        RecceStore.newShot(sessionId, sceneId, Settings.defaultCamera, Settings.defaultLens)
+                    ActionRow(Icons.Filled.Add, "Add shot", "Choose camera and lens, then frame it in the viewfinder") { picking = true }
+                    val frameCount = scene.shots.sumOf { it.references.size }
+                    ActionRow(Icons.Filled.GridView, "Compare frames", if (frameCount == 0) "No saved frames yet"
+                        else "$frameCount frame(s) side by side, cropped to the frame lines", enabled = frameCount > 0) {
+                        nav.push(Dest.Compare(sessionId, sceneId))
                     }
                 }
             }
@@ -88,8 +107,8 @@ fun SceneScreen(nav: Navigator, sessionId: String, sceneId: String) {
 fun ShotRow(shot: RecceShot, onOpen: () -> Unit, onFinder: () -> Unit, onDelete: () -> Unit) {
     val first = shot.references.minByOrNull { it.timestamp }
     val bmp = first?.let { Images.load(File(RecceStore.referencesDir, it.fileName), 320) }
-    Row(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(start = 16.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(64.dp, 40.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF2A2A30)), contentAlignment = Alignment.Center) {
+    Row(Modifier.cardRow().clickable(onClick = onOpen).padding(start = 16.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(64.dp, 40.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF22407F)), contentAlignment = Alignment.Center) {
             if (bmp != null) Image(bmp.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.size(64.dp, 40.dp))
             else Icon(Icons.Filled.PhotoCamera, null, tint = Color.Gray)
         }
@@ -102,5 +121,5 @@ fun ShotRow(shot: RecceShot, onOpen: () -> Unit, onFinder: () -> Unit, onDelete:
         IconButton(onFinder) { Icon(Icons.Filled.CenterFocusStrong, "Viewfinder", tint = Brand.accent) }
         IconButton(onDelete) { Icon(Icons.Filled.Delete, "Delete shot", tint = Color.Gray) }
     }
-    HorizontalDivider(color = Color(0x22FFFFFF))
+    RowDivider()
 }

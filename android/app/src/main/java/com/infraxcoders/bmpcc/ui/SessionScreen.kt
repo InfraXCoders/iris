@@ -68,7 +68,7 @@ fun SessionScreen(nav: Navigator, sessionId: String) {
                             RecceStore.update(sessionId) { it.copy(timestamp = c.timeInMillis) }
                         }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
                     })
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.cardRow().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             if (s.latitude != null && s.longitude != null) MonoText(fmt("%.5f, %.5f", s.latitude, s.longitude))
                             else Text("No location saved", color = Color.Gray)
@@ -96,7 +96,7 @@ fun SessionScreen(nav: Navigator, sessionId: String) {
             }
             section("Scenes") {
                 items(s.sortedScenes, key = { it.id }) { sc ->
-                    Row(Modifier.fillMaxWidth().clickable { nav.push(Dest.Scene(sessionId, sc.id)) }.padding(start = 16.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.cardRow().clickable { nav.push(Dest.Scene(sessionId, sc.id)) }.padding(start = 16.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("Scene ${sc.sceneNumber}", style = MaterialTheme.typography.titleMedium)
                             Text(sc.heading, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
@@ -106,7 +106,7 @@ fun SessionScreen(nav: Navigator, sessionId: String) {
                             Icon(Icons.Filled.Delete, "Delete scene", tint = Color.Gray)
                         }
                     }
-                    HorizontalDivider(color = Color(0x22FFFFFF))
+                    RowDivider()
                 }
                 item { ActionRow(Icons.Filled.Add, "Add scene", null) { RecceStore.newScene(sessionId)?.let { nav.push(Dest.Scene(sessionId, it.id)) } } }
             }
@@ -143,7 +143,7 @@ fun SessionScreen(nav: Navigator, sessionId: String) {
 @Composable
 fun NoteRow(note: RecceNote, onDelete: () -> Unit) {
     val sorted = note.sorted
-    Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.cardRow().padding(start = 16.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(note.rawTranscription)
             Spacer(Modifier.width(4.dp))
@@ -158,5 +158,5 @@ fun NoteRow(note: RecceNote, onDelete: () -> Unit) {
         }
         IconButton(onDelete) { Icon(Icons.Filled.Delete, "Delete note", tint = Color.Gray) }
     }
-    HorizontalDivider(color = Color(0x22FFFFFF))
+    RowDivider()
 }

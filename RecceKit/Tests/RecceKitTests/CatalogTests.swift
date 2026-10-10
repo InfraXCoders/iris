@@ -21,7 +21,7 @@ final class CatalogTests: XCTestCase {
 
     func testDatabaseValuesAreSane() {
         for l in Catalog.databaseLenses {
-            XCTAssert((8...400).contains(l.focalLengthMin), l.id)
+            XCTAssert((4...400).contains(l.focalLengthMin) && (l.focalLengthMin...2000).contains(l.focalLengthMax), l.id)
             XCTAssert((1...2.1).contains(l.anamorphicSqueeze), l.id)
             XCTAssert(l.maximumAperture == 0 || (0.9...8).contains(l.maximumAperture), l.id)
             XCTAssert(l.imageCircleMm == 0 || (15...80).contains(l.imageCircleMm), l.id)
@@ -40,6 +40,16 @@ final class CatalogTests: XCTestCase {
             let first = c.sensorModes[0]
             XCTAssertTrue(c.sensorModes.allSatisfy { $0.widthMm * $0.heightMm <= first.widthMm * first.heightMm + 0.01 }, c.id)
         }
+    }
+
+    func testZoomsAndPhotoLenses() throws {
+        let z = try XCTUnwrap(Catalog.lens(id: "fujinon_premista_28_100"))
+        XCTAssertEqual(z.model, "Premista 28-100mm T2.9")
+        XCTAssertEqual(z.lensType, .zoom)
+        XCTAssertEqual(z.focalLengthMax, 100)
+        let p = try XCTUnwrap(Catalog.lens(id: "sigma_art_18_35_f18"))
+        XCTAssertEqual(p.model, "Art DC HSM 18-35mm f/1.8")
+        XCTAssertEqual(p.maximumAperture, 1.8)
     }
 
     func testKnownLens() throws {

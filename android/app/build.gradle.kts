@@ -1,8 +1,19 @@
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
+
+// Version shown in the app (home screen) and in the APK name. build_android.command raises buildNumber by one per build.
+val versionProps = Properties().apply { rootProject.file("version.properties").inputStream().use { load(it) } }
+val appVersionName: String = versionProps.getProperty("versionName", "0.0.0")
+val appBuildNumber: Int = versionProps.getProperty("buildNumber", "1").toInt()
+val buildTime: String = LocalDateTime.now().format(DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale.US))
 
 android {
     namespace = "com.infraxcoders.bmpcc"
@@ -12,8 +23,10 @@ android {
         applicationId = "com.infraxcoders.bmpcccontrol"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appBuildNumber
+        versionName = appVersionName
+        buildConfigField("int", "BUILD_NUMBER", "$appBuildNumber")
+        buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
     }
 
     signingConfigs {
@@ -46,6 +59,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"

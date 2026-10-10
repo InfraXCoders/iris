@@ -120,7 +120,8 @@ The Android app is in the `android/` folder (same features, same lens/camera dat
 
 - **GitHub builds it:** push, then GitHub → **Actions** → **Android APK** → the latest run → **Artifacts**.
 - **Your Mac builds it:** `bash build_android.command` (installs Java 17 and the Android tools with Homebrew the
-  first time) → `BMPCC-Control-android.apk` in this folder.
+  first time) → `BMPCC-Control-v<version>-b<build>.apk` in this folder (e.g. `BMPCC-Control-v0.3.0-b2.apk`). The same
+  version and build number show at the bottom of the app's home screen, so you can tell which copy a phone has.
 
 Send the APK to a tester (WhatsApp, Drive, email). On the phone: tap it, allow installing from that app, tap
 **Install** (if Play Protect warns, **More details → Install anyway**). No Mac or account needed on their side.

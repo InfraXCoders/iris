@@ -27,6 +27,19 @@ sealed interface Dest {
         var query by mutableStateOf("")
         var filter by mutableStateOf(LensFilter())
     }
+    data object CameraControl : Dest
+    /** All recce projects (sessions). */
+    data object Recces : Dest
+    /** Bluetooth search and pairing; continues to [Shoot] once connected. */
+    data object Connect : Dest
+    /** Live camera control over Bluetooth. */
+    data object Shoot : Dest
+    /** "New recce" sheet over the camera picture; opens the viewfinder. */
+    data object RecceStart : Dest
+    /** Measure the phone camera's real angle of view. */
+    data object Calibrate : Dest
+    /** All saved frames of a scene side by side. */
+    data class Compare(val sessionId: String, val sceneId: String) : Dest
     data class LensInfo(val lensId: String) : Dest
     data class CameraInfo(val cameraId: String) : Dest
     class Coverage(cameraId: String? = null, lensId: String? = null, modeId: String? = null) : Dest {
@@ -44,6 +57,8 @@ class Navigator {
     val current: Dest get() = stack.last()
     fun push(d: Dest) { stack.add(d) }
     fun pop() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
+    /** Swaps the current screen for another (so Back skips the one being left). */
+    fun replace(d: Dest) { if (stack.size > 1) stack.removeAt(stack.lastIndex); stack.add(d) }
     /** Removes screens about a deleted recce. */
     fun popTo(d: Dest) { while (stack.size > 1 && stack.last() != d) stack.removeAt(stack.lastIndex) }
 }
@@ -76,5 +91,12 @@ private fun Content(nav: Navigator, d: Dest) {
         is Dest.LensInfo -> LensDetailScreen(nav, d.lensId)
         is Dest.CameraInfo -> CameraDetailScreen(nav, d.cameraId)
         is Dest.Coverage -> CoverageScreen(nav, d)
+        Dest.CameraControl -> CameraControlScreen(nav)
+        Dest.Recces -> RecceListScreen(nav)
+        Dest.Connect -> ConnectScreen(nav)
+        Dest.Shoot -> ShootScreen(nav)
+        Dest.RecceStart -> RecceStartScreen(nav)
+        Dest.Calibrate -> CalibrateScreen(nav)
+        is Dest.Compare -> CompareScreen(nav, d.sessionId, d.sceneId)
     }
 }

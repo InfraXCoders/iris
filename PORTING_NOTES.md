@@ -11,7 +11,7 @@ photos; camera and lens library; sun times; voice notes; PDF report; JSON export
 
 ## Left for later
 
-- **Camera control over Bluetooth** (no camera to test with yet). Protocol fixes needed are listed below.
+- **Camera control over Bluetooth**: done in the Android app (`android/`, with the protocol fixes below); iPhone next.
 - **Shot "AI analysis"**: the Android version returned fixed, made-up values (not real analysis), so it was
   not ported rather than show false data.
 

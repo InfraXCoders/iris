@@ -53,12 +53,23 @@ import com.infraxcoders.bmpcc.core.Coverage
 import java.util.Locale
 
 object Brand {
-    val accent = Color(0xFFFF5500)
-    val frameLine = Color(0xFF40B3FF)
-    val locked = Color(0xFFF23333)
+    /** Buttons, selected chips, highlights. */
+    val accent = Color(0xFF3D6BFF)
+    /** Accent for small text on the navy background (more contrast). */
+    val accentText = Color(0xFF8FAAFF)
+    val frameLine = Color(0xFF8FB4FF)
+    val locked = Color(0xFFFF4B33)
+    val record = Color(0xFFFF4B33)
     val panel = Color(0x8C000000)
-    val background = Color(0xFF0E0E10)
-    val surface = Color(0xFF1A1A1E)
+    /** Deep navy app background. */
+    val background = Color(0xFF0B1E45)
+    /** Rows and cards on the navy background. */
+    val surface = Color(0xFF14295A)
+    /** Light cards, chips and round buttons (with [ink] text). */
+    val light = Color(0xFFEEF0F5)
+    val lightChip = Color(0xFFE3E9F8)
+    val ink = Color(0xFF0B1E45)
+    val muted = Color(0xFF9AA8C7)
 }
 
 private val colors = darkColorScheme(
@@ -69,7 +80,11 @@ private val colors = darkColorScheme(
     surface = Brand.background,
     surfaceVariant = Brand.surface,
     surfaceContainer = Brand.surface,
-    surfaceContainerHigh = Color(0xFF242429),
+    surfaceContainerHigh = Color(0xFF1B3570),
+    surfaceContainerLow = Brand.surface,
+    surfaceContainerHighest = Color(0xFF22407F),
+    onSurfaceVariant = Brand.muted,
+    outline = Color(0xFF3A5591),
 )
 
 @Composable
@@ -105,12 +120,19 @@ fun Screen(
     )
 }
 
+/** Rows of a section sit on a card-coloured band, so a section reads as one grouped card. */
+fun Modifier.cardRow(): Modifier = this.fillMaxWidth().padding(horizontal = 12.dp).background(Brand.surface)
+
+/** Thin divider between rows inside a card. */
+@Composable
+fun RowDivider() = HorizontalDivider(color = Color(0x1FFFFFFF), modifier = Modifier.padding(horizontal = 12.dp).padding(start = 16.dp))
+
 /** Section header inside a list. */
 fun LazyListScope.section(title: String, footer: String? = null, content: LazyListScope.() -> Unit) {
     item(key = "h-$title") {
         Text(
-            title.uppercase(), style = MaterialTheme.typography.labelMedium, color = Brand.accent,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 6.dp),
+            title.uppercase(), style = MaterialTheme.typography.labelMedium, color = Brand.accentText,
+            modifier = Modifier.padding(start = 24.dp, end = 16.dp, top = 22.dp, bottom = 8.dp),
         )
     }
     content()
@@ -127,16 +149,17 @@ fun LazyListScope.section(title: String, footer: String? = null, content: LazyLi
 fun LabeledRow(label: String, value: String? = null, onClick: (() -> Unit)? = null, trailing: @Composable (() -> Unit)? = null) {
     Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .cardRow()
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, modifier = Modifier.weight(1f))
-        if (value != null) Text(value, color = Color.LightGray, fontFamily = FontFamily.Default)
+        if (value != null) Text(value, color = Color(0xFFB8B8C0), fontFamily = FontFamily.Default, maxLines = 2,
+            modifier = Modifier.padding(start = 12.dp))
         if (trailing != null) { Spacer(Modifier.width(8.dp)); trailing() }
     }
-    HorizontalDivider(color = Color(0x22FFFFFF))
+    RowDivider()
 }
 
 /** A text field that edits a saved value. */
@@ -149,7 +172,7 @@ fun Field(
         value = value, onValueChange = onChange, label = { Text(label) }, singleLine = singleLine,
         minLines = if (singleLine) 1 else 2, maxLines = if (singleLine) 1 else 8,
         keyboardOptions = KeyboardOptions(keyboardType = keyboard),
-        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        modifier = modifier.cardRow().padding(horizontal = 12.dp, vertical = 6.dp),
     )
 }
 
@@ -206,7 +229,7 @@ fun CoverageBadge(coverage: Coverage, nominal: Boolean = false, modifier: Modifi
 @Composable
 fun Hint(text: String) = Text(
     text, style = MaterialTheme.typography.bodySmall, color = Color.Gray,
-    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
 )
 
 @Composable

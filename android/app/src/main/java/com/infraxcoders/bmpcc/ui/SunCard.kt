@@ -30,7 +30,7 @@ object SunText {
 fun SunCard(latitude: Double, longitude: Double, date: Long) {
     val zone = ZoneId.systemDefault()
     val day = remember(latitude, longitude, date) { Solar.day(date, latitude, longitude, zone) }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(Modifier.cardRow().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         when {
             day.isPolarDay -> Text("The sun doesn't set on this day.")
             day.isPolarNight -> Text("The sun doesn't rise on this day.")
@@ -47,7 +47,7 @@ fun SunCard(latitude: Double, longitude: Double, date: Long) {
         val today = Instant.ofEpochMilli(date).atZone(zone).toLocalDate() == java.time.LocalDate.now(zone)
         if (today) {
             val now = Solar.position(System.currentTimeMillis(), latitude, longitude)
-            HorizontalDivider(color = Color(0x22FFFFFF))
+            RowDivider()
             if (now.elevation > Solar.HORIZON) {
                 SunRow("Sun now", "${now.elevation.degreesText()} high, ${now.compass} (${now.azimuth.toInt()}°)")
                 Text("Face ${Solar.compass(now.backlightHeading)} to backlight the subject.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)

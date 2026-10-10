@@ -284,13 +284,28 @@ class CatalogTest {
         assertEquals(Catalog.cameras.size, Catalog.cameras.map { it.id }.toSet().size)
         assertTrue(Catalog.databaseLenses.all { (it.sourceUrl ?: "").startsWith("http") })
         for (l in Catalog.databaseLenses) {
-            assertTrue(l.id, l.focalLengthMin in 8.0..400.0)
+            assertTrue(l.id, l.focalLengthMin in 4.0..400.0 && l.focalLengthMax in l.focalLengthMin..2000.0)
             assertTrue(l.id, l.anamorphicSqueeze in 1.0..2.1)
         }
         for (c in Catalog.databaseCameras) {
             val first = c.sensorModes[0]
             assertTrue(c.id, c.sensorModes.all { it.widthMm * it.heightMm <= first.widthMm * first.heightMm + 0.01 })
         }
+    }
+
+    @Test fun zoomsAndPhotoLenses() {
+        val z = Catalog.lens("fujinon_premista_28_100")!!
+        assertEquals("Premista 28-100mm T2.9", z.model)
+        assertEquals(LensType.ZOOM, z.lensType)
+        assertTrue(z.isZoom)
+        assertEquals(100.0, z.focalLengthMax, 0.0)
+        assertTrue(FocalOptions.focals(z).let { it.first() == 28.0 && it.last() == 100.0 && 50.0 in it })
+        val p = Catalog.lens("sigma_art_18_35_f18")!!
+        assertEquals("Art DC HSM 18-35mm f/1.8", p.model)
+        assertEquals(1.8, p.maximumAperture, 0.0)
+        val prime = Catalog.lens("arri_signature_prime_47")!!
+        assertEquals("Signature Prime 47mm T1.8", prime.model)
+        assertTrue(FocalOptions.focals(prime).size >= 10)
     }
 
     @Test fun knownLensAndCoverage() {

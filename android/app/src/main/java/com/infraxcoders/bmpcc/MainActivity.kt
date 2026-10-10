@@ -20,6 +20,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         RecceStore.init(this)
         Settings.init(this)
+        com.infraxcoders.bmpcc.ble.CameraLink.init(this)
         setContent {
             BMPCCTheme {
                 val nav = remember { Navigator() }

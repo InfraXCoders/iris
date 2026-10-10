@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds the Android app (APK) on this Mac. Run:  bash build_android.command
 # First run installs Java 17 and the Android command-line tools with Homebrew (about 1.5 GB, one time).
-# Result: BMPCC-Control-android.apk in this folder. Send it to a tester (WhatsApp, Drive, email).
+# Result: BMPCC-Control-v<version>-b<build>.apk in this folder. Send it to a tester (WhatsApp, Drive, email).
 cd "$(dirname "$0")" || exit 1
 mkdir -p logs
 set -o pipefail
@@ -47,15 +47,24 @@ if [ ! -d "$ANDROID_HOME/platforms/android-35" ] || [ ! -d "$ANDROID_HOME/build-
 fi
 echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
-# 3. Test and build
-echo "Testing and building (first time downloads Gradle and libraries, a few minutes)…"
+# 3. Next build number (shown in the app and in the APK name)
+VPROPS=android/version.properties
+VERSION="$(grep '^versionName=' "$VPROPS" | cut -d= -f2 | tr -d '[:space:]')"
+BUILD="$(( $(grep '^buildNumber=' "$VPROPS" | cut -d= -f2 | tr -d '[:space:]') + 1 ))"
+perl -pi -e "s/^buildNumber=.*/buildNumber=$BUILD/" "$VPROPS"
+APK="BMPCC-Control-v$VERSION-b$BUILD.apk"
+
+# 4. Test and build
+echo "Building version $VERSION (build $BUILD). First time downloads Gradle and libraries, a few minutes…"
 if (cd android && bash ./gradlew --no-daemon :core:test :app:assembleDebug) > logs/android-build.log 2>&1; then
-  cp android/app/build/outputs/apk/debug/app-debug.apk BMPCC-Control-android.apk
+  rm -f BMPCC-Control-android.apk BMPCC-Control-v*.apk
+  cp android/app/build/outputs/apk/debug/app-debug.apk "$APK"
   echo
-  echo "BUILD OK: $(pwd)/BMPCC-Control-android.apk"
+  echo "BUILD OK: $(pwd)/$APK"
+  echo "In the app, the home screen shows: v$VERSION · build $BUILD"
   echo "Send that file to your tester. On a phone connected by USB you can also run:"
-  echo "  $ANDROID_HOME/platform-tools/adb install -r BMPCC-Control-android.apk"
-  open -R BMPCC-Control-android.apk 2>/dev/null
+  echo "  $ANDROID_HOME/platform-tools/adb install -r $APK"
+  open -R "$APK" 2>/dev/null
 else
   echo "BUILD FAILED. The important lines:"
   grep -E "^e: |error:|FAILED|What went wrong" -A3 logs/android-build.log | head -60

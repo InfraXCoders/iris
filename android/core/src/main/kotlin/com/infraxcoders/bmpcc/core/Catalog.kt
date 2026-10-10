@@ -52,7 +52,8 @@ object Catalog {
     val databaseCameras: List<CameraProfile> by lazy { loadCameras(resource("cameras")) }
     val databaseLenses: List<LensProfile> by lazy { loadLenses(resource("lenses")) }
     val cameras: List<CameraProfile> by lazy { merge(BuiltInLibrary.cameras, databaseCameras) { it.id } }
-    val lenses: List<LensProfile> by lazy { merge(BuiltInLibrary.lenses, databaseLenses) { it.id } }
+    /** Built-ins, the database, then the maker-neutral sets used for a quick recce (see [QuickRecce]). */
+    val lenses: List<LensProfile> by lazy { merge(BuiltInLibrary.lenses, databaseLenses) { it.id } + QuickRecce.genericLenses }
 
     fun camera(id: String): CameraProfile? = cameras.firstOrNull { it.id == id }
     fun lens(id: String): LensProfile? = lenses.firstOrNull { it.id == id }
@@ -93,21 +94,31 @@ object Catalog {
     private fun splitMounts(s: String?): List<String> =
         (s ?: "").split(";").map { it.trim() }.filter { it.isNotEmpty() }
 
-    /** Lens rows: id, manufacturer, series, focal_mm, t_stop, squeeze, close_focus_m, image_circle_mm, length_mm,
-     * weight_g, front_diameter_mm, mounts (;), format, source_url, notes. */
+    /** Lens rows: id, manufacturer, series, focal_mm, focal_max_mm (zooms), t_stop, f_stop (photo lenses), squeeze,
+     * close_focus_m, image_circle_mm, length_mm, weight_g, front_diameter_mm, mounts (;), format, source_url, notes. */
     fun loadLenses(csv: String): List<LensProfile> = Csv.records(csv).mapNotNull { r ->
         val id = r["id"]?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
         val focal = num(r["focal_mm"])?.takeIf { it > 0 } ?: return@mapNotNull null
+        val focalMax = num(r["focal_max_mm"])?.takeIf { it > focal } ?: focal
+        val zoom = focalMax > focal
         val squeeze = num(r["squeeze"]) ?: 1.0
         val t = num(r["t_stop"]) ?: 0.0
+        val f = num(r["f_stop"]) ?: 0.0
         val series = r["series"] ?: ""
         val mounts = splitMounts(r["mounts"])
-        val tText = if (t > 0) " T${ShotPresets.apertureNumber(t)}" else ""
+        // Cine lenses publish T-stops, photo lenses f-numbers; the name says which.
+        val stopText = when {
+            t > 0 -> " T${ShotPresets.apertureNumber(t)}"
+            f > 0 -> " f/${ShotPresets.trim(f)}"
+            else -> ""
+        }
+        val focalText = if (zoom) "${ShotPresets.trim(focal)}-${ShotPresets.focalText(focalMax)}" else ShotPresets.focalText(focal)
         LensProfile(
-            id = id, manufacturer = r["manufacturer"] ?: "", model = "$series ${ShotPresets.focalText(focal)}$tText",
-            mount = mountFrom(mounts), lensType = if (squeeze > 1) LensType.ANAMORPHIC else LensType.PRIME,
-            focalLengthMin = focal, focalLengthMax = focal, availableFocalLengths = listOf(focal),
-            maximumAperture = t, minimumFocusDistance = num(r["close_focus_m"]) ?: 0.0, anamorphicSqueeze = squeeze,
+            id = id, manufacturer = r["manufacturer"] ?: "", model = "$series $focalText$stopText".trim(),
+            mount = mountFrom(mounts),
+            lensType = when { zoom -> LensType.ZOOM; squeeze > 1 -> LensType.ANAMORPHIC; else -> LensType.PRIME },
+            focalLengthMin = focal, focalLengthMax = focalMax, availableFocalLengths = if (zoom) listOf(focal, focalMax) else listOf(focal),
+            maximumAperture = if (t > 0) t else f, minimumFocusDistance = num(r["close_focus_m"]) ?: 0.0, anamorphicSqueeze = squeeze,
             imageCircleMm = num(r["image_circle_mm"]) ?: 0.0, verificationStatus = VerificationStatus.REFERENCE,
             series = series.ifEmpty { null }, lengthMm = num(r["length_mm"]), weightG = num(r["weight_g"]),
             frontDiameterMm = num(r["front_diameter_mm"]), mountNames = mounts.ifEmpty { null },

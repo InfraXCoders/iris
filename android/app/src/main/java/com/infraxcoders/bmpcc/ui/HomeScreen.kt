@@ -3,28 +3,38 @@ package com.infraxcoders.bmpcc.ui
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.Lens
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.SettingsInputAntenna
-import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -41,7 +51,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.infraxcoders.bmpcc.BuildConfig
+import com.infraxcoders.bmpcc.ble.CameraLink
+import com.infraxcoders.bmpcc.core.Catalog
 import com.infraxcoders.bmpcc.core.RecceSession
 import com.infraxcoders.bmpcc.data.RecceStore
 import com.infraxcoders.bmpcc.data.Settings
@@ -50,8 +70,97 @@ import com.infraxcoders.bmpcc.platform.rememberPermissionAsker
 import java.text.DateFormat
 import java.util.Date
 
+/** Start screen: choose Shoot (Bluetooth camera control) or Recce (director's viewfinder). */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(nav: Navigator) {
+    val sessions by RecceStore.sessions.collectAsState()
+    val connected = CameraLink.isConnected
+    val recent = sessions.maxByOrNull { it.modificationTimestamp }
+    Column(
+        Modifier.fillMaxSize().background(Brand.background).safeDrawingPadding().verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                buildAnnotatedString {
+                    withStyle(SpanStyle(color = Color.White)) { append("BMPCC ") }
+                    withStyle(SpanStyle(color = Brand.accent)) { append("CTRL") }
+                },
+                fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 26.sp, modifier = Modifier.weight(1f),
+            )
+            if (connected) Box(Modifier.size(8.dp).background(Color(0xFF34C759), CircleShape))
+            Text(
+                if (connected) "  ${CameraLink.cameraName ?: "Camera"}" else "No camera",
+                color = if (connected) Color.White else Brand.muted, fontSize = 13.sp, maxLines = 1,
+                modifier = Modifier.clickable { nav.push(if (connected) Dest.Shoot else Dest.Connect) },
+            )
+        }
+        Spacer(Modifier.height(30.dp))
+        Text("Choose how you want to work today.", color = Color(0xFFD5DDF0), fontSize = 15.sp)
+        Spacer(Modifier.height(22.dp))
+        ModeCard(
+            Icons.Outlined.PhotoCamera, "Shoot mode",
+            if (connected) "Connected to ${CameraLink.cameraName ?: "your camera"}. Tap to control it live."
+            else "Connect your camera over Bluetooth and control it live.",
+            highlighted = true,
+        ) { nav.push(if (connected) Dest.Shoot else Dest.Connect) }
+        Spacer(Modifier.height(14.dp))
+        ModeCard(Icons.Filled.CropFree, "Recce mode", "Pick a camera and lens, then frame shots on location.") { nav.push(Dest.RecceStart) }
+        if (recent != null) {
+            val frames = recent.scenes.sumOf { sc -> sc.shots.sumOf { it.references.size } }
+            Text(
+                "Recent: Project “${recent.projectName}” · $frames frame${if (frames == 1) "" else "s"}",
+                color = Color(0xFFD5DDF0), fontSize = 12.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().clickable { nav.push(Dest.Session(recent.id)) }.padding(vertical = 10.dp),
+            )
+        }
+        Spacer(Modifier.height(36.dp))
+        Text("LIBRARY & TOOLS", color = Brand.muted, fontSize = 11.sp, letterSpacing = 1.5.sp, fontFamily = FontFamily.Monospace)
+        Spacer(Modifier.height(10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ToolLink("My recces · ${sessions.size}") { nav.push(Dest.Recces) }
+            ToolLink("Lenses · ${Catalog.lenses.size}") { nav.push(Dest.Library(LibraryTab.LENSES)) }
+            ToolLink("Cameras · ${Catalog.cameras.size}") { nav.push(Dest.Library(LibraryTab.CAMERAS)) }
+            ToolLink("Lens coverage") { nav.push(Dest.Coverage()) }
+            ToolLink(if (Settings.fovCalibration != null) "Phone calibrated ✓" else "Calibrate phone") { nav.push(Dest.Calibrate) }
+        }
+        Spacer(Modifier.height(28.dp))
+        // Which copy of the app this is (same as the APK name: BMPCC-Control-v<version>-b<build>.apk).
+        Text(
+            "v${BuildConfig.VERSION_NAME} · build ${BuildConfig.BUILD_NUMBER} · ${BuildConfig.BUILD_TIME}",
+            color = Brand.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun ModeCard(icon: ImageVector, title: String, text: String, highlighted: Boolean = false, onClick: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().background(Brand.light, RoundedCornerShape(12.dp))
+            .border(if (highlighted) 2.dp else 0.dp, if (highlighted) Brand.accent else Color.Transparent, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 16.dp),
+    ) {
+        Icon(icon, null, tint = Brand.accent, modifier = Modifier.size(26.dp))
+        Spacer(Modifier.height(10.dp))
+        Text(title, color = Brand.ink, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Text(text, color = Brand.ink.copy(alpha = 0.85f), fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun ToolLink(text: String, onClick: () -> Unit) {
+    Text(
+        text, color = Color.White, fontSize = 13.sp,
+        modifier = Modifier.border(1.dp, Color(0xFF3A5591), RoundedCornerShape(50)).clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    )
+}
+
+@Composable
+fun RecceListScreen(nav: Navigator) {
     val sessions by RecceStore.sessions.collectAsState()
     var showNew by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<RecceSession?>(null) }
@@ -63,20 +172,20 @@ fun HomeScreen(nav: Navigator) {
         } catch (e: Exception) { e.message ?: "Import failed." }
     }
 
-    Screen("BMPCC Control", onBack = null) { pad ->
+    Screen("My recces", onBack = { nav.pop() }, actions = {
+        IconButton({ showNew = true }) { Icon(Icons.Filled.Add, "New recce project") }
+    }) { pad ->
         LazyColumn(contentPadding = pad) {
             item {
-                ActionRow(Icons.Filled.CenterFocusStrong, "Quick recce", "Open the viewfinder with ${Settings.defaultCamera.model}", Brand.accent) {
-                    val (s, sc, sh) = RecceStore.quickRecceShot(Settings.defaultCamera, Settings.defaultLens)
-                    nav.push(Dest.Finder(s, sc, sh))
+                ActionRow(Icons.Filled.CenterFocusStrong, "Quick recce", "Pick camera, lens and frame, then open the viewfinder", Brand.accentText) {
+                    nav.push(Dest.RecceStart)
                 }
-                ActionRow(Icons.Filled.Add, "New recce", null) { showNew = true }
             }
-            section("Recces") {
-                if (sessions.isEmpty()) item { Hint("No recces yet. Start one above, or import a JSON file from the iPhone app.") }
+            section("My recces") {
+                if (sessions.isEmpty()) item { Hint("No recces yet. Start a quick recce, tap + for a project, or import a JSON file from the iPhone app.") }
                 items(sessions, key = { it.id }) { s ->
                     Row(
-                        Modifier.fillMaxWidth().clickable { nav.push(Dest.Session(s.id)) }.padding(start = 16.dp, top = 10.dp, bottom = 10.dp),
+                        Modifier.cardRow().clickable { nav.push(Dest.Session(s.id)) }.padding(start = 16.dp, top = 10.dp, bottom = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
@@ -89,20 +198,17 @@ fun HomeScreen(nav: Navigator) {
                         }
                         IconButton(onClick = { confirmDelete = s }) { Icon(Icons.Filled.Delete, "Delete", tint = Color.Gray) }
                     }
-                    HorizontalDivider(color = Color(0x22FFFFFF))
+                    RowDivider()
                 }
             }
-            section("Databases & tools") {
+            section("More") {
                 item {
-                    ActionRow(Icons.Filled.Lens, "Lens database", "${com.infraxcoders.bmpcc.core.Catalog.lenses.size} lenses") { nav.push(Dest.Library(LibraryTab.LENSES)) }
-                    ActionRow(Icons.Filled.Videocam, "Camera database", "${com.infraxcoders.bmpcc.core.Catalog.cameras.size} cameras with recording modes") { nav.push(Dest.Library(LibraryTab.CAMERAS)) }
-                    ActionRow(Icons.Filled.Camera, "Lens coverage tool", "Image circle over the sensor") { nav.push(Dest.Coverage()) }
                     ActionRow(Icons.Filled.FileDownload, "Import recce (JSON)", "From the iPhone app or another phone") {
                         importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream", "*/*"))
                     }
-                    ActionRow(Icons.Filled.SettingsInputAntenna, "Camera control", "Bluetooth control of the BMPCC: coming in a later version", Color.Gray, enabled = false) {}
                 }
             }
+            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 
@@ -128,7 +234,7 @@ fun HomeScreen(nav: Navigator) {
 @Composable
 fun ActionRow(icon: ImageVector, title: String, subtitle: String?, tint: Color = Color.White, enabled: Boolean = true, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+        Modifier.cardRow().clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, null, tint = tint)
@@ -138,7 +244,7 @@ fun ActionRow(icon: ImageVector, title: String, subtitle: String?, tint: Color =
             if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
         }
     }
-    HorizontalDivider(color = Color(0x22FFFFFF))
+    RowDivider()
 }
 
 @Composable
