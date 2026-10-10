@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import com.infraxcoders.bmpcc.core.CameraProfile
 import com.infraxcoders.bmpcc.core.Catalog
 import com.infraxcoders.bmpcc.core.Coverage
+import com.infraxcoders.bmpcc.core.Distortion
 import com.infraxcoders.bmpcc.core.Framing
 import com.infraxcoders.bmpcc.core.LensProfile
 import com.infraxcoders.bmpcc.core.Optics
@@ -276,7 +277,11 @@ fun LensDetailScreen(nav: Navigator, lensId: String) {
                     LabeledRow("Maker", l.manufacturer)
                     l.series?.let { LabeledRow("Series", it) }
                     LabeledRow("Focal length", rangeText(l))
-                    LabeledRow("Maximum aperture", if (l.hasAperture) ShotPresets.tStopText(l.maximumAperture) else "Not published")
+                    LabeledRow("Maximum aperture", when {
+                        !l.hasAperture -> "Not published"
+                        l.model.contains(" f/") -> "f/" + ShotPresets.trim(l.maximumAperture) + " (photo lens: f-number)"
+                        else -> ShotPresets.tStopText(l.maximumAperture)
+                    })
                     LabeledRow("Squeeze", if (l.isAnamorphic) "${ShotPresets.trim(l.anamorphicSqueeze)}x anamorphic" else "Spherical")
                     if (l.minimumFocusDistance > 0) LabeledRow("Close focus", fmt("%.2f m · ", l.minimumFocusDistance) + feetInches(l.minimumFocusDistance))
                     LabeledRow("Image circle", if (l.hasImageCircle) fmt("%.1f mm", l.imageCircleMm) else "Not published")
@@ -285,6 +290,9 @@ fun LensDetailScreen(nav: Navigator, lensId: String) {
                     l.weightG?.let { LabeledRow("Weight", if (it >= 1000) fmt("%.2f kg", it / 1000) else "${it.toInt()} g") }
                     l.frontDiameterMm?.let { LabeledRow("Front diameter", "${Math.round(it)} mm") }
                     LabeledRow("Mount", l.allMountNames.joinToString(", "))
+                    val profile = Distortion.points.filter { it.lensId == l.id }
+                    LabeledRow("Distortion profile", if (profile.isEmpty()) (if (l.model.contains(" f/")) "No Lensfun profile for this lens" else "Not published by the maker")
+                        else "Lensfun, ${profile.size} focal length(s): " + profile.joinToString(", ") { ShotPresets.trim(it.focalMm) } + " mm")
                 }
             }
             if (l.sourceUrl != null || l.notes != null) section("Data source") {

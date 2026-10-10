@@ -7,7 +7,8 @@ public struct SolarPosition: Equatable, Sendable {
     public var elevation: Double
     public var compass: String { Solar.compass(azimuth) }
     /// The heading to point the camera so the sun is directly behind the subject.
-    public var backlightHeading: Double { (azimuth + 180).truncatingRemainder(dividingBy: 360) }
+    /// Camera heading for backlight: towards the sun, so the sun is behind the subject.
+    public var backlightHeading: Double { (azimuth.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360) }
 }
 
 /// Sun times for one local calendar day. Any value is nil when it doesn't happen that day

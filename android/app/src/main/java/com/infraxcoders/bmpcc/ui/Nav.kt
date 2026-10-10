@@ -40,6 +40,18 @@ sealed interface Dest {
     data object Calibrate : Dest
     /** All saved frames of a scene side by side. */
     data class Compare(val sessionId: String, val sceneId: String) : Dest
+    /** Sun planner for a recce / shot (or anywhere). The time and location are shared with the AR view. */
+    class Sun(val sessionId: String? = null, val sceneId: String? = null, val shotId: String? = null, time: Long = System.currentTimeMillis()) : Dest {
+        var time by mutableStateOf(time)
+        var latitude by mutableStateOf<Double?>(null)
+        var longitude by mutableStateOf<Double?>(null)
+        /** Buildings / hills recorded around the spot (saved to the recce when there is one). */
+        var skyline by mutableStateOf<List<com.infraxcoders.bmpcc.core.SkyPoint>>(emptyList())
+        var skylineLoaded = false
+    }
+    class SunAr(val planner: Sun) : Dest
+    /** LUT library: built-in looks and imported .cube files. */
+    data object Luts : Dest
     data class LensInfo(val lensId: String) : Dest
     data class CameraInfo(val cameraId: String) : Dest
     class Coverage(cameraId: String? = null, lensId: String? = null, modeId: String? = null) : Dest {
@@ -98,5 +110,8 @@ private fun Content(nav: Navigator, d: Dest) {
         Dest.RecceStart -> RecceStartScreen(nav)
         Dest.Calibrate -> CalibrateScreen(nav)
         is Dest.Compare -> CompareScreen(nav, d.sessionId, d.sceneId)
+        is Dest.Sun -> SunPlannerScreen(nav, d)
+        is Dest.SunAr -> SunArScreen(nav, d.planner)
+        Dest.Luts -> LutLibraryScreen(nav)
     }
 }

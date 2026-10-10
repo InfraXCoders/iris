@@ -46,12 +46,19 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.infraxcoders.bmpcc.core.CameraMovement
 import com.infraxcoders.bmpcc.core.Coverage
+import com.infraxcoders.bmpcc.core.Focus
 import com.infraxcoders.bmpcc.core.Optics
+import com.infraxcoders.bmpcc.core.ShotOptics
+import com.infraxcoders.bmpcc.core.Solar
 import com.infraxcoders.bmpcc.core.RecceShot
 import com.infraxcoders.bmpcc.core.ShotPresets
 import com.infraxcoders.bmpcc.core.ShotReference
 import com.infraxcoders.bmpcc.core.ShotType
 import com.infraxcoders.bmpcc.data.RecceStore
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import com.infraxcoders.bmpcc.data.LutStore
 import com.infraxcoders.bmpcc.platform.Images
 import java.io.File
 import java.text.DateFormat
@@ -85,6 +92,25 @@ fun ShotScreen(nav: Navigator, sessionId: String, sceneId: String, shotId: Strin
                     Field("Subject position", shot.subjectPosition, { v -> edit { it.copy(subjectPosition = v) } })
                     PresetRow("Camera height", shot.cameraHeight, ShotPresets.cameraHeights) { v -> edit { it.copy(cameraHeight = v) } }
                     DistanceField(shot.estimatedDistance) { v -> edit { it.copy(estimatedDistance = v) } }
+                    ShotOptics.depthOfField(shot)?.let { d ->
+                        LabeledRow("Depth of field", ShotOptics.dofText(d).removePrefix("DoF ") + fmt(" · hyperfocal %s", Focus.distanceText(d.hyperfocalM)))
+                        if (d.tooClose) Hint(fmt("Closer than this lens can focus (%.2f m).", shot.lens.minimumFocusDistance))
+                    }
+                    ShotOptics.distortionPercent(shot)?.let {
+                        LabeledRow("Lens distortion", ShotOptics.distortionText(it) + if (com.infraxcoders.bmpcc.core.Distortion.isCustom(shot.lens)) " (your measurement)" else "")
+                    }
+                    // Planned time and where the sun is then (needs the recce's location).
+                    val planned = shot.plannedTime
+                    val lat = session.latitude; val lon = session.longitude
+                    LabeledRow(
+                        "Planned time",
+                        when {
+                            planned == null -> "Not set: open the sun planner"
+                            lat != null && lon != null -> "${clockText(planned)} · sun ${sunText(Solar.position(planned, lat, lon))}"
+                            else -> clockText(planned) + " (save a location to see the sun)"
+                        },
+                        onClick = { nav.push(Dest.Sun(sessionId, sceneId, shotId, planned ?: System.currentTimeMillis())) },
+                    )
                 }
             }
             section("Camera & lens") {
@@ -111,6 +137,10 @@ fun ShotScreen(nav: Navigator, sessionId: String, sceneId: String, shotId: Strin
                     PresetRow("ISO", shot.iso, ShotPresets.isos) { v -> edit { it.copy(iso = v) } }
                     PresetRow("ND", shot.nd, ShotPresets.ndFilters) { v -> edit { it.copy(nd = v) } }
                     PresetRow("White balance", shot.whiteBalance, ShotPresets.whiteBalances) { v -> edit { it.copy(whiteBalance = v) } }
+                    // Look (LUT) for this shot: shown live in the viewfinder and on the saved frames below.
+                    ChoiceRow("LUT", shot.lut, listOf<String?>(null) + LutStore.entries.map { it.id }, { LutStore.nameOf(it) ?: "None" }) { v ->
+                        edit { it.copy(lut = v) }
+                    }
                 }
             }
             section("Framing", footer = "Calculated from the ${shot.camera.model}'s ${shot.sensorMode.name.lowercase()} area (${shot.sensorMode.sizeText}) with rectilinear lens geometry.") {
@@ -120,7 +150,7 @@ fun ShotScreen(nav: Navigator, sessionId: String, sceneId: String, shotId: Strin
                 val refs = shot.references.sortedBy { it.timestamp }
                 if (refs.isEmpty()) item { Hint("Capture frames from the viewfinder; they're saved here with the frame lines.") }
                 items(refs, key = { it.id }) { r ->
-                    ReferencePhoto(r) {
+                    ReferencePhoto(r, shot.lut) {
                         File(RecceStore.referencesDir, r.fileName).delete()
                         edit { s -> s.copy(references = s.references.filter { it.id != r.id }) }
                     }
@@ -198,8 +228,17 @@ private fun FramingRows(shot: RecceShot, nav: Navigator) {
 
 /** A reference photo with its frame lines drawn on it. */
 @Composable
-fun ReferencePhoto(r: ShotReference, onDelete: (() -> Unit)? = null) {
-    val bmp = Images.load(File(RecceStore.referencesDir, r.fileName))
+fun ReferencePhoto(r: ShotReference, lutId: String? = null, onDelete: (() -> Unit)? = null) {
+    val neutral = Images.load(File(RecceStore.referencesDir, r.fileName))
+    var showGraded by remember(lutId) { mutableStateOf(lutId != null) }
+    val graded by produceState<android.graphics.Bitmap?>(null, r.filePath, lutId, LutStore.version) {
+        value = if (lutId == null || neutral == null) null else withContext(Dispatchers.Default) { LutStore.graded(neutral, lutId) }
+    }
+    val bmp = if (showGraded && graded != null) graded else neutral
+    if (lutId != null && neutral != null) Row(Modifier.cardRow().padding(start = 12.dp, top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        ChoiceChip("Neutral", !showGraded) { showGraded = false }
+        ChoiceChip(LutStore.nameOf(lutId) ?: "Graded", showGraded) { showGraded = true }
+    }
     Column(Modifier.cardRow().padding(horizontal = 12.dp, vertical = 8.dp)) {
         if (bmp != null) {
             Box(Modifier.fillMaxWidth().aspectRatio(bmp.width.toFloat() / bmp.height).clip(RoundedCornerShape(6.dp))) {

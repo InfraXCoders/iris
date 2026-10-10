@@ -55,6 +55,8 @@ data class RecceSession(
     val creationTimestamp: Long = System.currentTimeMillis(),
     val modificationTimestamp: Long = System.currentTimeMillis(),
     val voiceNotes: List<RecceNote> = emptyList(),
+    /** Buildings / hills around the spot, recorded in the sun planner's camera view. */
+    val skyline: List<SkyPoint> = emptyList(),
 ) {
     val hasLocation: Boolean get() = latitude != null && longitude != null
     val shotCount: Int get() = scenes.sumOf { it.shots.size }
@@ -109,6 +111,10 @@ data class RecceShot(
     val cameraId: String? = null,
     val lensId: String? = null,
     val sensorModeId: String? = null,
+    /** Planned shooting time (epoch ms), used for the sun position of this shot. Android only for now. */
+    val plannedTime: Long? = null,
+    /** Look (LUT) chosen for this shot: "builtin:<name>" or "file:<file name>". Android only for now. */
+    val lut: String? = null,
 ) {
     /** Library entries for this shot; falls back to matching the stored model names (imports). */
     val baseCamera: CameraProfile
@@ -209,6 +215,7 @@ object RecceJson {
             )
         },
         "creationTimestamp" to s.creationTimestamp, "modificationTimestamp" to s.modificationTimestamp,
+        "skyline" to s.skyline.map { linkedMapOf("azimuth" to it.azimuth, "elevation" to it.elevation) },
         "voiceNotes" to s.sortedNotes.map { n ->
             linkedMapOf(
                 "id" to n.id, "sessionId" to s.id, "shotId" to n.shotId, "rawTranscription" to n.rawTranscription,
@@ -235,7 +242,7 @@ object RecceJson {
             linkedMapOf("id" to m.id, "shotId" to sh.id, "type" to m.type.name, "x" to m.x, "y" to m.y, "label" to m.label)
         },
         "creationTimestamp" to sh.creationTimestamp, "modificationTimestamp" to sh.modificationTimestamp,
-        "cameraId" to sh.cameraId, "lensId" to sh.lensId, "sensorModeId" to sh.sensorModeId,
+        "cameraId" to sh.cameraId, "lensId" to sh.lensId, "sensorModeId" to sh.sensorModeId, "plannedTime" to sh.plannedTime, "lut" to sh.lut,
     )
 
     private fun session(o: JObj): RecceSession {
@@ -248,6 +255,7 @@ object RecceJson {
             scenes = o.objs("scenes").map { scene(it, id) },
             creationTimestamp = o.long("creationTimestamp", System.currentTimeMillis()),
             modificationTimestamp = o.long("modificationTimestamp", System.currentTimeMillis()),
+            skyline = o.objs("skyline").map { SkyPoint(it.dbl("azimuth"), it.dbl("elevation")) },
             voiceNotes = o.objs("voiceNotes").map { n ->
                 RecceNote(
                     id = n.str("id").ifEmpty { newId() }, sessionId = id, shotId = n.strOrNull("shotId"),
@@ -296,7 +304,7 @@ object RecceJson {
             },
             creationTimestamp = o.long("creationTimestamp", System.currentTimeMillis()),
             modificationTimestamp = o.long("modificationTimestamp", System.currentTimeMillis()),
-            cameraId = o.strOrNull("cameraId"), lensId = o.strOrNull("lensId"), sensorModeId = o.strOrNull("sensorModeId"),
+            cameraId = o.strOrNull("cameraId"), lensId = o.strOrNull("lensId"), sensorModeId = o.strOrNull("sensorModeId"), plannedTime = o.dblOrNull("plannedTime")?.toLong(), lut = o.strOrNull("lut"),
         )
     }
 }

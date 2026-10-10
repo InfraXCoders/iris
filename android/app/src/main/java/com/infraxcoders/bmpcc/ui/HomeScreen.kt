@@ -63,8 +63,10 @@ import com.infraxcoders.bmpcc.BuildConfig
 import com.infraxcoders.bmpcc.ble.CameraLink
 import com.infraxcoders.bmpcc.core.Catalog
 import com.infraxcoders.bmpcc.core.RecceSession
+import com.infraxcoders.bmpcc.data.LutStore
 import com.infraxcoders.bmpcc.data.RecceStore
 import com.infraxcoders.bmpcc.data.Settings
+import com.infraxcoders.bmpcc.platform.CrashLog
 import com.infraxcoders.bmpcc.platform.Locator
 import com.infraxcoders.bmpcc.platform.rememberPermissionAsker
 import java.text.DateFormat
@@ -96,6 +98,20 @@ fun HomeScreen(nav: Navigator) {
                 modifier = Modifier.clickable { nav.push(if (connected) Dest.Shoot else Dest.Connect) },
             )
         }
+        // The app closed unexpectedly last time: let the tester send the report.
+        var crash by remember { mutableStateOf(CrashLog.last()) }
+        val context = LocalContext.current
+        crash?.let { report ->
+            Column(Modifier.padding(top = 16.dp).fillMaxWidth().background(Color(0xFF3A1F12), RoundedCornerShape(12.dp)).padding(12.dp)) {
+                Text("The app closed unexpectedly last time.", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(report.lineSequence().drop(4).firstOrNull { it.isNotBlank() }?.take(140) ?: "", color = Color(0xFFFFC9A8), fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    Pill("Share crash report", color = Brand.light) { CrashLog.share(context, report) }
+                    Pill("Dismiss", color = Color(0x33FFFFFF), textColor = Color.White) { CrashLog.clear(); crash = null }
+                }
+            }
+        }
         Spacer(Modifier.height(30.dp))
         Text("Choose how you want to work today.", color = Color(0xFFD5DDF0), fontSize = 15.sp)
         Spacer(Modifier.height(22.dp))
@@ -123,6 +139,8 @@ fun HomeScreen(nav: Navigator) {
             ToolLink("Lenses · ${Catalog.lenses.size}") { nav.push(Dest.Library(LibraryTab.LENSES)) }
             ToolLink("Cameras · ${Catalog.cameras.size}") { nav.push(Dest.Library(LibraryTab.CAMERAS)) }
             ToolLink("Lens coverage") { nav.push(Dest.Coverage()) }
+            ToolLink("Sun planner") { nav.push(Dest.Sun()) }
+            ToolLink("LUTs · ${LutStore.entries.size}") { nav.push(Dest.Luts) }
             ToolLink(if (Settings.fovCalibration != null) "Phone calibrated ✓" else "Calibrate phone") { nav.push(Dest.Calibrate) }
         }
         Spacer(Modifier.height(28.dp))

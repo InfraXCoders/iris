@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.drawText
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -89,6 +90,19 @@ fun ChoiceChip(text: String, selected: Boolean, modifier: Modifier = Modifier, m
             .border(1.dp, if (selected) Brand.accent else Color(0xFFC9D3EE), RoundedCornerShape(10.dp))
             .clickable(onClick = onClick).padding(horizontal = 13.dp, vertical = 9.dp),
     )
+}
+
+/**
+ * drawText that skips labels starting outside the canvas. Compose's drawText throws when the text would start
+ * beyond the right or bottom edge (negative width left), which crashed the sun AR view.
+ */
+fun androidx.compose.ui.graphics.drawscope.DrawScope.drawLabel(
+    measurer: androidx.compose.ui.text.TextMeasurer, text: String, topLeft: androidx.compose.ui.geometry.Offset,
+    style: androidx.compose.ui.text.TextStyle,
+) {
+    if (topLeft.x.isNaN() || topLeft.y.isNaN()) return
+    if (topLeft.x < 0f || topLeft.y < 0f || topLeft.x > size.width - 8f || topLeft.y > size.height - 8f) return
+    drawText(measurer, text, topLeft, style)
 }
 
 /** Small light square with a "‹", used as the back button on the camera screens. */

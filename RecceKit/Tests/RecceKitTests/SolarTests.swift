@@ -73,6 +73,6 @@ final class SolarTests: XCTestCase {
         XCTAssertEqual(Solar.compass(180), "South")
         XCTAssertEqual(Solar.compass(-90), "West")
         XCTAssertEqual(Solar.compass(359), "North")
-        XCTAssertEqual(SolarPosition(azimuth: 290, elevation: 5).backlightHeading, 110)
+        XCTAssertEqual(SolarPosition(azimuth: 290, elevation: 5).backlightHeading, 290)
     }
 }

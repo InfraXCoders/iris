@@ -56,6 +56,89 @@ The protocol code is in `core/.../Bmd.kt`, tested against the examples in Blackm
    - **Compare frames** (scene screen): every saved frame of the scene side by side, cropped to its frame lines.
 3. Frames, shots and notes are saved under **My recces → Quick Recce** (or the project you opened), with PDF export.
 
+### Sun planner and sun in the camera (AR)
+
+Open it from a recce (Sun → **Sun planner**), a shot (**Planned time**), the viewfinder (Guides → Sun planner)
+or Home → **Sun planner**.
+
+- **Date and time:** pick a date (tap it for a calendar, or ‹ ›) and slide the time; quick buttons for blue hour,
+  sunrise, golden hour, noon, sunset, now. Shows the sun's direction and height, shadow length and direction,
+  and which way to face for backlight.
+- **Sun path:** a dial of the day's path (centre = straight up, edge = horizon, north up), hour marks, golden
+  hour in orange, sunrise/sunset points.
+- **AR:** "See the sun in the camera" draws the horizon with compass points, the day's path with hours and the sun
+  at the chosen time over the live picture. Uses the phone's rotation sensor and compass, corrected to true north.
+  A warning appears when the compass reports poor accuracy (move the phone in a figure-8). To remove the remaining
+  error, put the crosshair on the real sun and tap **Align on the sun** (corrects the heading exactly), or nudge
+  **−1° / +1°**. The correction lasts while the app runs.
+- **Buildings and hills (skyline):** in AR, tap **Record skyline** and sweep the crosshair along the tops of
+  buildings, trees and hills, standing where the camera will be. It's saved with the recce; the planner then shows
+  **Direct sun here** (e.g. 07:42–16:55), "behind the skyline" for the chosen time, the skyline in grey on the dial
+  and in blue in AR. Directions not recorded count as open sky; gaps up to 15° are bridged.
+- **Cloud forecast (optional):** Weather → "Get the cloud forecast": hourly cloud cover, low cloud and rain chance
+  for the next 16 days from [Open-Meteo](https://open-meteo.com) (free, no account; CC BY 4.0), with a plain read
+  ("direct sun likely / may come and go / unlikely"). Off until you turn it on, because it sends the location to
+  Open-Meteo and needs internet (the app's only internet use).
+- **When will the sun reach this spot:** in AR, aim the crosshair at a window, a gap or a rooftop edge and tap
+  **Mark this spot**: when the sun passes through it (or how close it gets), when it is in that compass direction
+  (and how far above/below), and from when to when the sun is higher than that spot (e.g. clears the building).
+- **Saved with the shot:** "Use 16:30 for shot 3" stores the time; the shot page and the PDF report show it with
+  the sun's position (needs the recce's location).
+
+Sun maths: NOAA algorithm; refraction (Sæmundsson) and the sun's half-disc are allowed for against the skyline.
+Terrain is only what you record (no elevation maps). Forecasts are forecasts. Times are in the phone's time zone.
+The planned time and skyline are saved in Android recces (the iPhone app ignores them for now).
+
+### Lens character: focus and distortion
+
+- **Focus distance and depth of field:** tap the exposure line → Focus distance. The viewfinder shows
+  "Focus 3.0 m · DoF 2.7–3.3 m" and warns when the subject is closer than the lens can focus (maker's close-focus
+  figure). Thin-lens formulas, circle of confusion = sensor diagonal / 1500, T-stop used as the stop.
+  The shot page and PDF report show it too.
+- **Distortion:** 40 photo lenses (Sigma Art, Canon EF L, Sony GM, Olympus/OM PRO, Panasonic) have measured profiles
+  from the [Lensfun](https://github.com/lensfun/lensfun) database (CC BY-SA 3.0). The viewfinder draws where the
+  frame edges really fall (dotted orange line; Guides → Lens distortion) and the shot page shows e.g.
+  "−1.7 % barrel at the corners". Cine lens makers don't publish distortion, so for any lens without a profile you
+  can enter your own measurement: Guides → **Enter this lens's distortion…** (% at the corners of the frame, from a
+  grid chart or a straight wall; − = barrel). It's saved per lens and focal length, drawn the same way, and always
+  labelled "your measurement".
+- **Phone calibration reminder:** until the phone's angle of view is calibrated, the viewfinder shows a reminder
+  for a few seconds (tap it to calibrate).
+
+### LUT preview
+
+- **Library:** Home → LUTs. Six built-in looks (Warm, Cool, Teal & Orange, Bleach bypass, High contrast,
+  Black & white) plus your own `.cube` files (3D up to 65³, or 1D; max 20 MB), imported from Files, Drive or
+  WhatsApp. Each LUT shows a colour-chart preview and its **input**: Rec.709, or Blackmagic Film Gen 5 for
+  log-to-Rec.709 LUTs (picked automatically when the file name says film / log / gen5 / BRAW / BMD).
+- **Live in the viewfinder:** the LUT button picks a look; "Before / after" adds a split you drag sideways.
+  Runs on the GPU and needs Android 13 or newer; on older phones the look is applied to saved frames only.
+- **Per shot:** the LUT is saved with each shot (shot page → Exposure → LUT). Saved frames and Compare have a
+  Neutral / Graded switch, and the PDF report lists the LUT.
+- **Accuracy:** a monitoring preview, not a colour-managed pipeline. For Gen 5 LUTs the phone's picture is
+  converted to an approximate Film Gen 5 curve (Blackmagic's published Gen 5 formula): tone only, no gamut
+  conversion, so colours and highlights won't match a real BRAW grade. Use it to judge mood, not final colour.
+
+### Exposure and focus tools
+
+Viewfinder → **Expo** button. Settings are remembered.
+
+- **False colour:** ARRI's published exposure bands (ALEXA manual, "False Color Exposure Check"): purple 0–2.5 %
+  black clipping, blue 2.5–4 %, green 38–42 % (18 % grey), pink 52–56 % (grey + 1 stop, skin), yellow 97–99 %,
+  red 99–100 % clipping; the rest in grey. A key is shown at the top. (Blackmagic doesn't publish its band values.)
+- **Zebras:** stripes at or above 70–100 % (tap the level line to change it; 100 % means ≥ 99 %).
+- **Focus peaking:** edges coloured red / green / blue / yellow / white, sensitivity low / medium / high.
+- **Scopes:** waveform, RGB parade or histogram of the picture **inside the frame lines**, ~10 times a second,
+  with the share of clipped (any channel ≥ 99 %) and crushed (luma < 2.5 %) pixels. Tap the scope to enlarge it.
+- False colour and zebras work on the graded picture (after the shot's LUT) — what you see. Peaking uses the
+  ungraded picture's edges. False colour, zebras and peaking need Android 13 or newer; the scopes work on every phone.
+
+**Accuracy:** these measure the *phone's* picture. With "Preview exposure on the phone" on, the phone's
+auto-exposure is shifted to follow the planned ISO, shutter, ND and iris, so the tools show how the scene sits
+relative to that plan — a guide for lighting the scene, not the BMPCC's own signal. Phone sensors have less dynamic
+range than the camera, so they clip earlier. Peaking shows what is sharp for the phone's small lens, which has far
+more depth of field than a cine lens: use the Focus / DoF line for the cinema lens.
+
 ### Accuracy: calibrate the phone once
 
 Frame lines are only as accurate as the phone camera's angle of view. By default the app uses what the phone

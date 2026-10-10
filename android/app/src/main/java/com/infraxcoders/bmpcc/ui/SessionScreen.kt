@@ -1,5 +1,7 @@
 package com.infraxcoders.bmpcc.ui
 
+import com.infraxcoders.bmpcc.core.Skyline
+
 import android.Manifest
 import android.app.DatePickerDialog
 import androidx.compose.foundation.clickable
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
@@ -90,8 +93,11 @@ fun SessionScreen(nav: Navigator, sessionId: String) {
             }
             section("Sun") {
                 item {
-                    if (s.latitude != null && s.longitude != null) SunCard(s.latitude!!, s.longitude!!, s.timestamp)
+                    if (s.latitude != null && s.longitude != null) SunCard(s.latitude!!, s.longitude!!, s.timestamp, remember(s.skyline) { Skyline(s.skyline).takeIf { !it.isEmpty } })
                     else Hint("Save a location to see sunrise, sunset, golden hour and blue hour.")
+                    ActionRow(Icons.Filled.WbSunny, "Sun planner", "Time slider, sun path, sun in the camera (AR), when the sun reaches a spot", Color(0xFFFFD27A)) {
+                        nav.push(Dest.Sun(sessionId))
+                    }
                 }
             }
             section("Scenes") {

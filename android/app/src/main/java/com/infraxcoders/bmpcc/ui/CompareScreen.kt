@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.infraxcoders.bmpcc.core.RecceShot
 import com.infraxcoders.bmpcc.core.ShotReference
+import com.infraxcoders.bmpcc.data.LutStore
 import com.infraxcoders.bmpcc.data.RecceStore
 import com.infraxcoders.bmpcc.platform.Images
 import java.io.File
@@ -51,7 +53,11 @@ fun CompareScreen(nav: Navigator, sessionId: String, sceneId: String) {
     val scene = sessions.firstOrNull { it.id == sessionId }?.scenes?.firstOrNull { it.id == sceneId } ?: return Gone(nav)
     val frames = scene.sortedShots.flatMap { shot -> shot.references.sortedBy { it.timestamp }.map { shot to it } }
     var columns by remember { mutableIntStateOf(2) }
+    var graded by remember { mutableStateOf(true) }
+    val anyLut = frames.any { it.first.lut != null }
     Screen("Compare · Scene ${scene.sceneNumber}", onBack = { nav.pop() }, actions = {
+        if (anyLut) Text(if (graded) "Neutral" else "Graded", color = Brand.accentText, fontSize = 14.sp,
+            modifier = Modifier.clickable { graded = !graded }.padding(12.dp))
         Text(if (columns == 2) "1 column" else "2 columns", color = Brand.accentText, fontSize = 14.sp,
             modifier = Modifier.clickable { columns = if (columns == 2) 1 else 2 }.padding(12.dp))
     }) { pad ->
@@ -65,16 +71,20 @@ fun CompareScreen(nav: Navigator, sessionId: String, sceneId: String) {
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(frames, key = { "${it.first.id}/${it.second.id}" }) { (shot, ref) ->
-                FrameCard(shot, ref) { nav.push(Dest.Shot(sessionId, sceneId, shot.id)) }
+                FrameCard(shot, ref, graded) { nav.push(Dest.Shot(sessionId, sceneId, shot.id)) }
             }
         }
     }
 }
 
 @Composable
-private fun FrameCard(shot: RecceShot, ref: ShotReference, onClick: () -> Unit) {
-    val bmp by produceState<Bitmap?>(null, ref.filePath) {
-        value = withContext(Dispatchers.IO) { Images.load(File(RecceStore.referencesDir, ref.fileName), 1200) }
+private fun FrameCard(shot: RecceShot, ref: ShotReference, graded: Boolean, onClick: () -> Unit) {
+    val lutId = if (graded) shot.lut else null
+    val bmp by produceState<Bitmap?>(null, ref.filePath, lutId, LutStore.version) {
+        value = withContext(Dispatchers.IO) {
+            val neutral = Images.load(File(RecceStore.referencesDir, ref.fileName), 1200)
+            if (neutral != null && lutId != null) LutStore.graded(neutral, lutId) ?: neutral else neutral
+        }
     }
     Column(Modifier.clickable(onClick = onClick)) {
         val b = bmp
@@ -95,7 +105,7 @@ private fun FrameCard(shot: RecceShot, ref: ShotReference, onClick: () -> Unit) 
         } else Box(Modifier.fillMaxWidth().aspectRatio(16f / 9).background(Color(0xFF22407F), RoundedCornerShape(6.dp)))
         Text("Shot ${shot.shotNumber} · ${shot.shotType.label}", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(top = 4.dp))
-        Text("${shot.focalLength} · ${shot.aspectRatio} · ${shot.lens.series ?: shot.lens.model}", color = Color.Gray, fontSize = 11.sp,
+        Text("${shot.focalLength} · ${shot.aspectRatio} · ${shot.lens.series ?: shot.lens.model}" + (lutId?.let { " · " + (LutStore.nameOf(it) ?: "") } ?: ""), color = Color.Gray, fontSize = 11.sp,
             fontFamily = FontFamily.Monospace, maxLines = 1)
     }
 }

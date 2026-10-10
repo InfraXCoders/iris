@@ -18,8 +18,10 @@ import com.infraxcoders.bmpcc.ui.Navigator
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.infraxcoders.bmpcc.platform.CrashLog.install(this)
         RecceStore.init(this)
         Settings.init(this)
+        com.infraxcoders.bmpcc.data.LutStore.init(this)
         com.infraxcoders.bmpcc.ble.CameraLink.init(this)
         setContent {
             BMPCCTheme {

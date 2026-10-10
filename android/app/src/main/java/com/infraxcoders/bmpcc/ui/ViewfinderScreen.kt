@@ -28,6 +28,27 @@ import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.unit.IntOffset
+import com.infraxcoders.bmpcc.core.Lut3D
+import com.infraxcoders.bmpcc.core.LutInput
+import com.infraxcoders.bmpcc.data.LutStore
+import com.infraxcoders.bmpcc.platform.PictureEffect
+import com.infraxcoders.bmpcc.platform.PictureTools
+import com.infraxcoders.bmpcc.platform.ScopeAnalyzer
+import com.infraxcoders.bmpcc.platform.ScopeResult
+import com.infraxcoders.bmpcc.core.FalseColour
+import com.infraxcoders.bmpcc.core.PeakingColour
+import com.infraxcoders.bmpcc.core.PeakingLevel
+import com.infraxcoders.bmpcc.core.ScopeKind
+import com.infraxcoders.bmpcc.core.Scopes
+import com.infraxcoders.bmpcc.core.Zebra
+import com.infraxcoders.bmpcc.data.Settings
+import androidx.compose.runtime.SideEffect
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -110,7 +131,10 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.infraxcoders.bmpcc.ble.CameraLink
 import com.infraxcoders.bmpcc.core.Bmd
+import com.infraxcoders.bmpcc.core.Distortion
 import com.infraxcoders.bmpcc.core.Exposure
+import com.infraxcoders.bmpcc.core.Focus
+import com.infraxcoders.bmpcc.core.ShotOptics
 import com.infraxcoders.bmpcc.core.FocalOptions
 import com.infraxcoders.bmpcc.core.FrameLines
 import com.infraxcoders.bmpcc.core.MarkerType
@@ -302,6 +326,13 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     var showSafe by remember { mutableStateOf(false) }
     var showLevel by remember { mutableStateOf(true) }
     var compare by remember { mutableStateOf(false) }
+    var showDistortion by remember { mutableStateOf(true) }
+    var lutMenu by remember { mutableStateOf(false) }
+    var lutCompare by remember { mutableStateOf(false) }
+    var lutSplit by remember { mutableFloatStateOf(0.5f) }
+    var expoMenu by remember { mutableStateOf(false) }
+    var distortionDialog by remember { mutableStateOf(false) }
+    var calibrationNote by remember { mutableStateOf(false) }
     var customFocal by remember { mutableStateOf(false) }
     var markerType by remember { mutableStateOf<MarkerType?>(null) }
     var screen by remember { mutableStateOf(IntSize.Zero) }
@@ -328,7 +359,7 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     val w = screen.width.toDouble()
     val h = screen.height.toDouble()
     val video = Monitor.aspectFill(if (landscape) phone.streamAspect else 1 / phone.streamAspect, w, h)
-    val area = if (landscape) Monitor.centredArea(w, h, with(density) { 96.dp.toPx() }.toDouble(), with(density) { 74.dp.toPx() }.toDouble())
+    val area = if (landscape) Monitor.centredArea(w, h, with(density) { 96.dp.toPx() }.toDouble(), with(density) { 86.dp.toPx() }.toDouble())
     else Monitor.centredArea(w, h, 0.0, min(with(density) { 210.dp.toPx() }.toDouble(), h * 0.3))
     val view = PhoneView.fromFormat(phone.longSideFov, phone.streamAspect, !landscape)
     val layout = if (reference != null && w > 0 && h > 0) Monitor.layout(
@@ -371,7 +402,30 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black).onSizeChanged { screen = it }) {
-        if (hasCamera) CameraPreview(context, lifecycleOwner, phone, rotation)
+        // The shot's look (LUT), live on the picture (Android 13+). Before / after: left of the split stays neutral.
+        val lutEntry = LutStore.entry(shot.lut)
+        val lut by produceState<Lut3D?>(LutStore.cached(shot.lut), shot.lut) {
+            value = withContext(Dispatchers.Default) { LutStore.load(shot.lut) }
+        }
+        val lutInput = if (lutEntry != null) LutStore.input(lutEntry.id) else LutInput.REC709
+        // Exposure and focus tools: false colour, zebras and peaking on the picture; scopes measure inside the frame.
+        val tools = PictureTools(
+            falseColour = Settings.falseColour,
+            zebraLevel = if (Settings.zebras) Settings.zebraLevel else null,
+            peaking = if (Settings.peaking) Settings.peakingLevel else null,
+            peakingColour = Settings.peakingColour,
+        )
+        val scopeKind = Settings.scope
+        val scopes = remember { ScopeAnalyzer(ContextCompat.getMainExecutor(context)) }
+        val scopeCrop = Scopes.crop(layout?.frame, video)
+        SideEffect {
+            scopes.kind = scopeKind; scopes.lut = lut; scopes.input = lutInput; scopes.crop = scopeCrop
+        }
+        LaunchedEffect(scopeKind) { scopes.clear() }
+        if (hasCamera) CameraPreview(
+            context, lifecycleOwner, phone, rotation, lut, lutInput, if (lutCompare && lut != null) lutSplit * w.toFloat() else null,
+            tools, scopes, scopeKind,
+        )
         MonitorOverlay(
             layout?.frame, layout?.lines, shot.markers, showThirds, showCentre, showSafe,
             maskAlpha = if (surroundings) 0.45f else 0.82f,
@@ -387,6 +441,14 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         )
         if (showLevel) LevelOverlay(layout?.frame, tilt)
         // Compare: the other focal lengths of the set as labelled frame lines around / inside the current frame.
+        // Lens distortion (Lensfun profile): where the frame edges really fall for this photo lens.
+        val distortionModel = remember(lens.id, shot.focalMm, Settings.distortionVersion) { Distortion.modelFor(lens, shot.focalMm) }
+        if (showDistortion && distortionModel != null && layout != null && layout.lines.fits && reference != null &&
+            Distortion.withinCalibration(lens, reference.deliveredWidthMm, reference.deliveredHeightMm)
+        ) {
+            val pts = Distortion.frameOutline(distortionModel, reference.deliveredWidthMm, reference.deliveredHeightMm, reference.effectiveFocalLengthMm)
+            DistortionOverlay(pts, layout.frame, reference.tanHalfH, reference.tanHalfV)
+        }
         if (compare && layout != null) {
             val zoomed = Monitor.viewAcross(view, video, area).zoomed(layout.zoom)
             val others = compareFocals(focals, shot.focalMm).mapNotNull { f ->
@@ -396,6 +458,15 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
             }
             CompareOverlay(others)
         }
+
+        if (scopeKind != ScopeKind.NONE && hasCamera) ScopePanel(
+            scopes, scopeKind,
+            if (landscape) Modifier.align(Alignment.BottomStart).padding(start = 70.dp, bottom = 62.dp)
+            else Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = 12.dp, bottom = 222.dp),
+        )
+
+        // Above the frame overlays, so it gets the drags.
+        if (lutCompare && lut != null && PictureEffect.supported && w > 0) SplitHandle(lutSplit, w.toFloat()) { lutSplit = it }
 
         // ── Top: camera, focal length and view (plus exposure in landscape), frame ──
         Row(
@@ -407,8 +478,12 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(shot.focalLength, color = Color(0xFFC9D8FF), fontSize = if (landscape) 24.sp else 32.sp,
                     fontFamily = FontFamily.Monospace, maxLines = 1)
-                val hfov = reference?.let { "H-FOV ${Math.round(it.deliveredFov.horizontal)}°" }
-                if (landscape) ExposureLine(shot, tilt, prefix = hfov) { exposureSheet = true }
+                val hfov = listOfNotNull(reference?.let { "H-FOV ${Math.round(it.deliveredFov.horizontal)}°" }, lutEntry?.name)
+                    .joinToString(" · ").ifEmpty { null }
+                if (landscape) {
+                    ExposureLine(shot, tilt, prefix = hfov) { exposureSheet = true }
+                    FocusLine(shot) { exposureSheet = true }
+                }
                 else hfov?.let {
                     Text(it, color = Color(0xFFAFC0E6), fontSize = 11.sp, fontFamily = FontFamily.Monospace, letterSpacing = 1.sp)
                 }
@@ -425,6 +500,7 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         val warn = when {
             phone.error != null -> phone.error
             layout != null && !layout.lines.fits -> "Wider than the phone camera can see: the frame shows the phone's widest view."
+            ShotOptics.depthOfField(shot)?.tooClose == true -> fmt("Closer than this lens can focus (%.2f m).", lens.minimumFocusDistance)
             !phone.fovMeasured && phone.camera != null -> "This phone didn't report its lens angle; using 70°."
             else -> null
         }
@@ -439,6 +515,16 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
             warn?.let { VfPill(it, Color(0xCC8A3A00)) }
             flash?.let { VfPill(it, Color(0xCC1E6B2E)) }
             markerType?.let { VfPill("Tap inside the frame to place: ${it.label}", Color(0xCC000000)) }
+            if (calibrationNote && !phone.calibrated) Pill(
+                "Phone not calibrated: frame lines can be a few % off. Calibrate ›", modifier = Modifier.padding(top = 6.dp),
+                color = Color(0xCC000000), textColor = Color.White,
+            ) { calibrationNote = false; nav.push(Dest.Calibrate) }
+            val liveWanted = lut != null || tools.any
+            val savedNote = if (lut != null) " The LUT is applied to saved frames." else ""
+            if (liveWanted && !PictureEffect.supported) VfPill("Live LUT, false colour, zebras and peaking need Android 13 or newer.$savedNote", Color(0xCC000000))
+            else if (liveWanted && !PictureEffect.working) VfPill("Live picture tools aren't available on this phone's graphics.$savedNote", Color(0xCC000000))
+            if (scopeKind != ScopeKind.NONE && !scopes.available) VfPill("This phone can't run a scope next to the camera picture.", Color(0xCC000000))
+            if (tools.falseColour && PictureEffect.supported && PictureEffect.working) FalseColourLegend()
         }
 
         // Pieces used in both layouts.
@@ -471,11 +557,23 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
                         },
                         { guidesMenu = false; nav.push(Dest.Calibrate) },
                     )
+                    DropdownMenuItem({ Text("Sun planner (sun path, AR)…", fontSize = 13.sp) }, {
+                        guidesMenu = false; nav.push(Dest.Sun(sessionId, sceneId, shotId, shot.plannedTime ?: System.currentTimeMillis()))
+                    })
                     HorizontalDivider()
                     ToggleItem("Centre mark", showCentre) { showCentre = it }
                     ToggleItem("Safe areas 90% / 80%", showSafe) { showSafe = it }
                     ToggleItem("Show outside the frame", surroundings) { surroundings = it }
                     ToggleItem("Compare focal lengths", compare) { compare = it }
+                    if (Distortion.hasProfile(lens)) ToggleItem(
+                        "Lens distortion" + (ShotOptics.distortionPercent(shot)?.let { " (" + ShotOptics.distortionText(it) + ")" } ?: "") +
+                            if (Distortion.isCustom(lens)) " · your measurement" else "",
+                        showDistortion,
+                    ) { showDistortion = it }
+                    if (reference != null && (!Distortion.hasProfile(lens) || Distortion.isCustom(lens))) DropdownMenuItem(
+                        { Text(if (Distortion.isCustom(lens)) "Edit your distortion measurement…" else "Enter this lens's distortion…", fontSize = 13.sp) },
+                        { guidesMenu = false; distortionDialog = true },
+                    )
                     ToggleItem("Lock zoom", locked) { locked = it }
                     HorizontalDivider()
                     MarkerType.entries.forEach { t ->
@@ -484,6 +582,55 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
                     if (markerType != null) DropdownMenuItem({ Text("Stop placing markers") }, { markerType = null; guidesMenu = false })
                     if (shot.markers.isNotEmpty()) DropdownMenuItem({ Text("Remove all markers", color = Color(0xFFFF453A)) },
                         { edit { it.copy(markers = emptyList()) }; guidesMenu = false })
+                }
+            }
+            Box {
+                RoundButton("LUT", selected = lut != null, size = 42.dp) { lutMenu = true }
+                DropdownMenu(lutMenu, { lutMenu = false }) {
+                    DropdownMenuItem({ Text("No LUT" + if (shot.lut == null) "  ✓" else "") }, { edit { it.copy(lut = null) }; lutCompare = false; lutMenu = false })
+                    LutStore.entries.forEach { e ->
+                        DropdownMenuItem(
+                            { Text(e.name + (if (e.builtIn) "" else " (.cube)") + if (e.id == shot.lut) "  ✓" else "") },
+                            { edit { it.copy(lut = e.id) }; lutMenu = false },
+                        )
+                    }
+                    HorizontalDivider()
+                    if (lut != null) ToggleItem("Before / after", lutCompare) { lutCompare = it }
+                    DropdownMenuItem({ Text("Import and manage LUTs…") }, { lutMenu = false; nav.push(Dest.Luts) })
+                }
+            }
+            Box {
+                RoundButton("Expo", selected = tools.any || scopeKind != ScopeKind.NONE, size = 42.dp) { expoMenu = true }
+                DropdownMenu(expoMenu, { expoMenu = false }) {
+                    ToggleItem("False colour", Settings.falseColour) { Settings.chooseFalseColour(it) }
+                    ToggleItem("Zebras", Settings.zebras) { Settings.chooseZebras(it) }
+                    if (Settings.zebras) DropdownMenuItem({ Text("Zebra level: ${Settings.zebraLevel}%  (tap to change)", fontSize = 13.sp) }, {
+                        val l = Zebra.levels
+                        Settings.chooseZebraLevel(l[(l.indexOf(Settings.zebraLevel) + 1) % l.size])
+                    })
+                    ToggleItem("Focus peaking", Settings.peaking) { Settings.choosePeaking(it) }
+                    if (Settings.peaking) {
+                        DropdownMenuItem({ Text("Peaking colour: ${Settings.peakingColour.label}  (tap to change)", fontSize = 13.sp) }, {
+                            val c = PeakingColour.entries
+                            Settings.choosePeakingColour(c[(Settings.peakingColour.ordinal + 1) % c.size])
+                        })
+                        DropdownMenuItem({ Text("Peaking sensitivity: ${Settings.peakingLevel.label}  (tap to change)", fontSize = 13.sp) }, {
+                            val c = PeakingLevel.entries
+                            Settings.choosePeakingLevel(c[(Settings.peakingLevel.ordinal + 1) % c.size])
+                        })
+                    }
+                    HorizontalDivider()
+                    ScopeKind.entries.forEach { k ->
+                        DropdownMenuItem({ Text(k.label + if (k == scopeKind) "  ✓" else "") }, { Settings.chooseScope(k); expoMenu = false })
+                    }
+                    HorizontalDivider()
+                    DropdownMenuItem({
+                        Text(
+                            "Measures the phone's picture (exposed to follow ISO, shutter, ND and iris), through the LUT. " +
+                                "A guide for the scene, not the camera's own signal. Peaking shows what is sharp for the phone's lens.",
+                            fontSize = 11.sp, color = Color.Gray,
+                        )
+                    }, {}, enabled = false)
                 }
             }
             RoundButton("Notes", size = 42.dp) { notes = true }
@@ -532,7 +679,8 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 ExposureLine(shot, tilt) { exposureSheet = true }
-                Spacer(Modifier.height(8.dp))
+                FocusLine(shot) { exposureSheet = true }
+                Spacer(Modifier.height(6.dp))
                 FocalChips(focals, shot.focalMm, ::setFocal, onCustom = if (lens.isZoom || lens.manufacturer == QuickRecce.GENERIC) ({ customFocal = true }) else null)
                 Spacer(Modifier.height(16.dp))
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -546,6 +694,10 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         }
     }
     LaunchedEffect(flash) { if (flash != null) { kotlinx.coroutines.delay(2500); flash = null } }
+    // Reminder (for a few seconds) while the phone's angle of view isn't calibrated.
+    LaunchedEffect(phone.camera != null, phone.calibrated) {
+        if (phone.camera != null && !phone.calibrated) { calibrationNote = true; kotlinx.coroutines.delay(8000); calibrationNote = false }
+    }
 
     if (setup) RecceSheet(
         title = "Setup", subtitle = "Camera, lens and frame for shot ${shot.shotNumber}.", button = "Apply",
@@ -553,6 +705,17 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     ) { c -> edit { c.applyTo(it) }; setup = false }
     if (exposureSheet) ExposureSheet(shot, exposurePreview, { exposurePreview = it }, ::edit, { flash = it }) { exposureSheet = false }
     if (notes) NoteComposer(sessionId, shotId) { notes = false }
+    if (distortionDialog && reference != null) DistortionDialog(
+        current = if (Distortion.isCustom(lens)) ShotOptics.distortionPercent(shot) else null,
+        lensName = lens.displayName, focal = shot.focalLength,
+        onDismiss = { distortionDialog = false },
+        onSave = { pct ->
+            val k1 = pct?.let { Distortion.k1FromCornerPercent(it, reference.deliveredWidthMm, reference.deliveredHeightMm, reference.effectiveFocalLengthMm) }
+            Settings.saveDistortion(lens.id, shot.focalMm, k1)
+            if (pct != null) showDistortion = true
+            distortionDialog = false
+        },
+    )
     if (customFocal) FocalDialog(lens, shot.focalMm, onDismiss = { customFocal = false }) { f ->
         customFocal = false
         if (locked) { flash = "Zoom is locked (Guides → Lock zoom)."; return@FocalDialog }
@@ -573,6 +736,18 @@ private fun ExposureLine(shot: RecceShot, tilt: State<Tilt?>, prefix: String? = 
     Text(
         parts.joinToString(" · "), color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.Monospace, maxLines = 1,
         modifier = Modifier.clickable(onClick = onClick).background(Color(0x66000000), RoundedCornerShape(50)).padding(horizontal = 12.dp, vertical = 6.dp),
+    )
+}
+
+/** "Focus 3.0 m · DoF 2.7–3.3 m" under the exposure line (tap for the focus distance). */
+@Composable
+private fun FocusLine(shot: RecceShot, onClick: () -> Unit) {
+    val d = shot.estimatedDistance ?: return
+    val dof = ShotOptics.depthOfField(shot)
+    Text(
+        listOfNotNull("Focus ${Focus.distanceText(d)}", dof?.let { ShotOptics.dofText(it) }).joinToString(" · "),
+        color = if (dof?.tooClose == true) Color(0xFFFFB35C) else Color(0xFFC9D8FF), fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+        maxLines = 1, modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 3.dp),
     )
 }
 
@@ -613,6 +788,22 @@ private fun compareFocals(focals: List<Double>, current: Double): List<Double> {
     return (0 until 6).map { others[it * (others.size - 1) / 5] }.distinct()
 }
 
+/** The frame outline bent by the lens's measured distortion (dotted), over the straight frame lines. */
+@Composable
+private fun DistortionOverlay(points: List<Pair<Double, Double>>, frame: ScreenRect, tanHalfH: Double, tanHalfV: Double) {
+    Canvas(Modifier.fillMaxSize()) {
+        if (points.isEmpty() || tanHalfH <= 0 || tanHalfV <= 0) return@Canvas
+        val path = androidx.compose.ui.graphics.Path()
+        points.forEachIndexed { i, (tx, ty) ->
+            val x = (frame.midX + tx / tanHalfH * frame.width / 2).toFloat()
+            val y = (frame.midY + ty / tanHalfV * frame.height / 2).toFloat()
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        path.close()
+        drawPath(path, Color(0xFFFF9F0A), style = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))))
+    }
+}
+
 /** Thin labelled frame lines for the compared focal lengths. */
 @Composable
 private fun CompareOverlay(frames: List<Pair<Double, ScreenRect>>) {
@@ -622,7 +813,7 @@ private fun CompareOverlay(frames: List<Pair<Double, ScreenRect>>) {
             val c = Color(0xFFFFE08A)
             drawRect(c.copy(alpha = 0.85f), Offset(r.x.toFloat(), r.y.toFloat()), Size(r.width.toFloat(), r.height.toFloat()),
                 style = Stroke(1.2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 6f))))
-            drawText(measurer, ShotPresets.focalText(f), Offset(r.x.toFloat() + 4.dp.toPx(), r.y.toFloat() + 2.dp.toPx()),
+            drawLabel(measurer, ShotPresets.focalText(f), Offset(r.x.toFloat() + 4.dp.toPx(), r.y.toFloat() + 2.dp.toPx()),
                 style = TextStyle(color = c, fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold))
         }
     }
@@ -696,6 +887,22 @@ private fun ExposureSheet(
             ChipLine("ND", shot.nd, ShotPresets.ndFilters, display = ::ndShort) { v -> edit { it.copy(nd = v) }; if (link) CameraLink.sendNd(Exposure.ndStops(v)) }
             val stops = T_STOPS.filter { !lens.hasAperture || it >= lens.maximumAperture - 0.001 }.map { ShotPresets.tStopText(it) }
             ChipLine("Iris", tText(shot.aperture), stops) { v -> edit { it.copy(aperture = v) }; if (link) Exposure.stop(v)?.let { CameraLink.sendAperture(it) } }
+            // Focus distance → depth of field (and a warning when closer than the lens focuses).
+            val distTexts = Focus.presetsM.map { Focus.distanceText(it) }
+            ChipLine("Focus distance", shot.estimatedDistance?.let { Focus.distanceText(it) } ?: "", distTexts) { t ->
+                val i = distTexts.indexOf(t)
+                if (i >= 0) edit { it.copy(estimatedDistance = Focus.presetsM[i]) }
+            }
+            ShotOptics.depthOfField(shot)?.let { d ->
+                Text(
+                    ShotOptics.dofText(d) + " · hyperfocal " + Focus.distanceText(d.hyperfocalM) +
+                        (if (d.tooClose) fmt("\nCloser than this lens can focus (%.2f m).", lens.minimumFocusDistance) else ""),
+                    fontSize = 13.sp, color = if (d.tooClose) Color(0xFFD9341F) else Brand.ink, fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                Text("Circle of confusion ${fmt("%.3f", Focus.circleOfConfusionMm(shot.sensorMode))} mm (sensor diagonal / 1500); T-stop used as the stop.",
+                    fontSize = 11.sp, color = Color(0xFF5B6B8C))
+            }
             val modes = shot.baseCamera.sensorModes
             if (modes.size > 1) ChipLine("Recording mode", shot.sensorMode.name, modes.map { it.name }) { name ->
                 modes.firstOrNull { it.name == name }?.let { m -> edit { it.copy(sensorModeId = m.id) } }
@@ -742,7 +949,11 @@ private fun ToggleItem(label: String, value: Boolean, onChange: (Boolean) -> Uni
 }
 
 @Composable
-internal fun CameraPreview(context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner, phone: PhoneCamera, rotation: Int) {
+internal fun CameraPreview(
+    context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner, phone: PhoneCamera, rotation: Int,
+    lut: Lut3D? = null, lutInput: LutInput = LutInput.REC709, splitPx: Float? = null,
+    tools: PictureTools = PictureTools(), scopes: ScopeAnalyzer? = null, scopeKind: ScopeKind = ScopeKind.NONE,
+) {
     val previewView = remember {
         PreviewView(context).apply {
             scaleType = PreviewView.ScaleType.FILL_CENTER
@@ -750,7 +961,9 @@ internal fun CameraPreview(context: Context, lifecycleOwner: androidx.lifecycle.
         }
     }
     // Re-bound when the screen turns, so the picture and photos have the right orientation.
-    DisposableEffect(lifecycleOwner, rotation) {
+    // The scope stream is only bound while a scope is shown (rebinding blinks the picture once).
+    val scopeOn = scopes != null && scopeKind != ScopeKind.NONE
+    DisposableEffect(lifecycleOwner, rotation, scopeOn) {
         val future = ProcessCameraProvider.getInstance(context)
         var provider: ProcessCameraProvider? = null
         var disposed = false
@@ -766,7 +979,16 @@ internal fun CameraPreview(context: Context, lifecycleOwner: androidx.lifecycle.
                 val capture = ImageCapture.Builder().setResolutionSelector(selector).setTargetRotation(rotation)
                     .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
                 p.unbindAll()
-                val cam = p.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture)
+                val cam = if (scopeOn && scopes != null) {
+                    runCatching {
+                        p.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture, scopes.useCase(rotation))
+                            .also { scopes.available = true }
+                    }.getOrElse {
+                        // This phone can't run three streams: keep the picture and photos, no scopes.
+                        p.unbindAll(); scopes.available = false
+                        p.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture)
+                    }
+                } else p.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture)
                 phone.capture = capture
                 phone.preview = preview
                 phone.readOptics(cam)
@@ -777,7 +999,140 @@ internal fun CameraPreview(context: Context, lifecycleOwner: androidx.lifecycle.
         }, ContextCompat.getMainExecutor(context))
         onDispose { disposed = true; provider?.unbindAll(); phone.camera = null }
     }
-    AndroidView({ previewView }, Modifier.fillMaxSize())
+    AndroidView({ previewView }, Modifier.fillMaxSize(), update = { v ->
+        PictureEffect.apply(v, lut, lutInput, splitPx ?: -1f, tools)
+    })
+}
+
+/**
+ * The user's own distortion figure for a lens without a Lensfun profile (most cine lenses): % at the corners of this
+ * frame, from a grid / lens test or the maker's chart. Saved for the lens at this focal length.
+ */
+@Composable
+private fun DistortionDialog(current: Double?, lensName: String, focal: String, onDismiss: () -> Unit, onSave: (Double?) -> Unit) {
+    var text by remember { mutableStateOf(current?.let { fmt("%.1f", it) } ?: "") }
+    val v = text.replace(',', '.').replace('−', '-').toDoubleOrNull()
+    val ok = v != null && v in -30.0..30.0 && v != 0.0
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Lens distortion") },
+        text = {
+            Column {
+                Text("$lensName at $focal. Enter what you measured at the corners of this frame (shoot a grid or a straight wall).",
+                    fontSize = 13.sp)
+                OutlinedTextField(text, { text = it }, singleLine = true, suffix = { Text("%") }, modifier = Modifier.padding(top = 8.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text))
+                Text("Negative = barrel (e.g. −2), positive = pincushion. Shown as \"your measurement\"; not a maker's figure.",
+                    fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 6.dp))
+            }
+        },
+        confirmButton = { TextButton({ onSave(v) }, enabled = ok) { Text("Save") } },
+        dismissButton = {
+            Row {
+                if (current != null) TextButton({ onSave(null) }) { Text("Remove", color = Color(0xFFFF453A)) }
+                TextButton(onDismiss) { Text("Cancel") }
+            }
+        },
+    )
+}
+
+/** The false colour key: band colours and their levels (ARRI's published bands). */
+@Composable
+private fun FalseColourLegend() {
+    Row(
+        Modifier.padding(top = 6.dp).background(Color(0xB3000000), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        FalseColour.bands.forEach { b ->
+            Box(Modifier.size(9.dp).background(Color(b.argb), RoundedCornerShape(2.dp)))
+            Text(b.label.removeSuffix("%"), color = Color.White, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+        }
+        Text("%", color = Color.White, fontSize = 9.sp)
+    }
+}
+
+/** Waveform, RGB parade or histogram of the picture inside the frame, with the share of clipped and crushed pixels. Tap to enlarge. */
+@Composable
+private fun ScopePanel(scopes: ScopeAnalyzer, kind: ScopeKind, modifier: Modifier) {
+    // Read here, so only the panel redraws with each scope frame.
+    val result: ScopeResult? = scopes.result
+    var big by remember { mutableStateOf(false) }
+    val pw = if (big) 280.dp else 190.dp
+    val ph = if (big) 150.dp else 100.dp
+    Column(modifier.background(Color(0xB3000000), RoundedCornerShape(8.dp)).clickable { big = !big }.padding(6.dp)) {
+        Box(Modifier.size(pw, ph)) {
+            val grid = Color(0x55FFFFFF)
+            Canvas(Modifier.fillMaxSize()) {
+                if (kind == ScopeKind.HISTOGRAM) {
+                    listOf(0.25f, 0.5f, 0.75f).forEach { f -> drawLine(grid, Offset(size.width * f, 0f), Offset(size.width * f, size.height), 1f) }
+                } else {
+                    listOf(0f, 0.25f, 0.5f, 0.75f, 1f).forEach { f ->
+                        val y = size.height * (1 - f)
+                        drawLine(grid, Offset(0f, y), Offset(size.width, y), 1f, pathEffect = if (f == 0f || f == 1f) null else PathEffect.dashPathEffect(floatArrayOf(4f, 4f)))
+                    }
+                    if (kind == ScopeKind.PARADE) listOf(1 / 3f, 2 / 3f).forEach { f -> drawLine(grid, Offset(size.width * f, 0f), Offset(size.width * f, size.height), 1f) }
+                }
+            }
+            val wave = result?.waveform
+            val hist = result?.histogram
+            when {
+                result == null || result.kind != kind -> Text("…", color = Color.White, modifier = Modifier.align(Alignment.Center))
+                kind != ScopeKind.HISTOGRAM && wave != null -> Image(wave.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+                kind == ScopeKind.HISTOGRAM && hist != null -> Canvas(Modifier.fillMaxSize()) {
+                    val peak = hist.peak.toFloat()
+                    fun trace(bins: IntArray, color: Color, fill: Boolean) {
+                        val path = androidx.compose.ui.graphics.Path()
+                        val step = size.width / (bins.size - 1).coerceAtLeast(1)
+                        path.moveTo(0f, size.height)
+                        bins.forEachIndexed { i, n -> path.lineTo(i * step, size.height * (1 - n / peak)) }
+                        path.lineTo(size.width, size.height); path.close()
+                        if (fill) drawPath(path, color) else drawPath(path, color, style = Stroke(1.5f))
+                    }
+                    trace(hist.r, Color(0x66FF4040), true)
+                    trace(hist.g, Color(0x6640FF40), true)
+                    trace(hist.b, Color(0x664080FF), true)
+                    trace(hist.y, Color(0xDDFFFFFF), false)
+                }
+            }
+            if (kind != ScopeKind.HISTOGRAM) {
+                Text("100", color = Color(0x99FFFFFF), fontSize = 8.sp, modifier = Modifier.align(Alignment.TopStart))
+                Text("50", color = Color(0x99FFFFFF), fontSize = 8.sp, modifier = Modifier.align(Alignment.CenterStart))
+            }
+        }
+        val stats = result?.histogram?.let { fmt(" · Clip %.1f%% · Crush %.1f%%", it.clipped * 100, it.crushed * 100) } ?: ""
+        Text(kind.label + stats, color = Color.White, fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+    }
+}
+
+/** Draggable divider for the LUT before / after view. */
+@Composable
+private fun SplitHandle(fraction: Float, width: Float, onChange: (Float) -> Unit) {
+    val density = LocalDensity.current
+    val current by rememberUpdatedState(fraction)
+    val x = fraction * width
+    Box(Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawLine(Color.White, Offset(x, 0f), Offset(x, size.height), 2.dp.toPx())
+            drawCircle(Color.White, 14.dp.toPx(), Offset(x, size.height / 2))
+            drawCircle(Brand.accent, 11.dp.toPx(), Offset(x, size.height / 2))
+        }
+        Text("BEFORE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = with(density) { (x - 64.dp.toPx()).coerceAtLeast(0f).toDp() }))
+        Text("AFTER", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = with(density) { (x + 18.dp.toPx()).toDp() }))
+        // The touch strip around the line.
+        Box(
+            Modifier.width(48.dp).fillMaxHeight(0.6f).align(Alignment.CenterStart)
+                .padding(start = 0.dp)
+                .offset { IntOffset((x - 24.dp.toPx()).toInt(), 0) }
+                .pointerInput(width) {
+                    detectHorizontalDragGestures { change, drag ->
+                        change.consume()
+                        onChange(((current * width + drag) / width).coerceIn(0.05f, 0.95f))
+                    }
+                },
+        )
+    }
 }
 
 /** Monitor mask, frame lines, guides and markers. */

@@ -14,6 +14,11 @@ import com.infraxcoders.bmpcc.core.RecceNote
 import com.infraxcoders.bmpcc.core.RecceScene
 import com.infraxcoders.bmpcc.core.RecceSession
 import com.infraxcoders.bmpcc.core.RecceShot
+import com.infraxcoders.bmpcc.core.PeakingColour
+import com.infraxcoders.bmpcc.core.PeakingLevel
+import com.infraxcoders.bmpcc.core.ScopeKind
+import com.infraxcoders.bmpcc.core.Zebra
+import com.infraxcoders.bmpcc.core.Distortion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -167,6 +172,19 @@ object Settings {
     var fovCalibration by mutableStateOf<Double?>(null); private set
     var kits by mutableStateOf<List<Kit>>(emptyList()); private set
 
+    // Exposure and focus tools in the viewfinder (Module D), kept between sessions.
+    var falseColour by mutableStateOf(false); private set
+    var zebras by mutableStateOf(false); private set
+    var zebraLevel by mutableStateOf(Zebra.DEFAULT); private set
+    var peaking by mutableStateOf(false); private set
+    var peakingColour by mutableStateOf(PeakingColour.RED); private set
+    var peakingLevel by mutableStateOf(PeakingLevel.MEDIUM); private set
+    var scope by mutableStateOf(ScopeKind.NONE); private set
+    /** Bumped when the user's own lens distortion measurements change (kept in [Distortion.custom]). */
+    var distortionVersion by mutableStateOf(0); private set
+    /** Cloud forecast turned on (it sends the location to Open-Meteo). */
+    var weatherOn by mutableStateOf(false); private set
+
     fun init(context: Context) {
         p = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
         defaultCameraId = p.getString("defaultCameraId", null) ?: Catalog.defaultCamera.id
@@ -177,6 +195,15 @@ object Settings {
         defaultAspect = p.getString("defaultAspect", null) ?: "2.39:1"
         defaultModeId = p.getString("defaultModeId", null)
         fovCalibration = p.getFloat("fovCalibration", 0f).takeIf { it > 0f }?.toDouble()
+        falseColour = p.getBoolean("falseColour", false)
+        zebras = p.getBoolean("zebras", false)
+        zebraLevel = p.getInt("zebraLevel", Zebra.DEFAULT).takeIf { it in Zebra.levels } ?: Zebra.DEFAULT
+        peaking = p.getBoolean("peaking", false)
+        peakingColour = PeakingColour.of(p.getString("peakingColour", null))
+        peakingLevel = PeakingLevel.of(p.getString("peakingLevel", null))
+        scope = ScopeKind.of(p.getString("scope", null))
+        weatherOn = p.getBoolean("weatherOn", false)
+        loadDistortion()
         kits = (p.getString("kits", null) ?: "").lines().mapNotNull { line ->
             val f = line.split('\t')
             if (f.size < 6) null else Kit(f[0], f[1], f[2], f[3], f[4].toDoubleOrNull() ?: 35.0, f[5])
@@ -200,6 +227,32 @@ object Settings {
         fovCalibration = v
         p.edit().apply { if (v == null) remove("fovCalibration") else putFloat("fovCalibration", v.toFloat()) }.apply()
     }
+    fun chooseFalseColour(on: Boolean) { falseColour = on; p.edit().putBoolean("falseColour", on).apply() }
+    fun chooseZebras(on: Boolean) { zebras = on; p.edit().putBoolean("zebras", on).apply() }
+    fun chooseZebraLevel(v: Int) { zebraLevel = v; p.edit().putInt("zebraLevel", v).apply() }
+    fun choosePeaking(on: Boolean) { peaking = on; p.edit().putBoolean("peaking", on).apply() }
+    fun choosePeakingColour(c: PeakingColour) { peakingColour = c; p.edit().putString("peakingColour", c.name).apply() }
+    fun choosePeakingLevel(l: PeakingLevel) { peakingLevel = l; p.edit().putString("peakingLevel", l.name).apply() }
+    fun chooseWeather(on: Boolean) { weatherOn = on; p.edit().putBoolean("weatherOn", on).apply() }
+
+    // The user's own distortion measurements: one line per lens and focal length, "lensId<TAB>focal<TAB>k1".
+    private fun loadDistortion() {
+        Distortion.custom = (p.getString("customDistortion", null) ?: "").lines().mapNotNull { line ->
+            val f = line.split('\t')
+            val focal = f.getOrNull(1)?.toDoubleOrNull(); val k1 = f.getOrNull(2)?.toDoubleOrNull()
+            if (f.size < 3 || focal == null || k1 == null) null else Triple(f[0], focal, k1)
+        }.groupBy({ it.first }, { it.second to it.third })
+    }
+    /** Saves a measured distortion for [lensId] at [focal] mm (replacing one at the same focal length); null k1 removes it. */
+    fun saveDistortion(lensId: String, focal: Double, k1: Double?) {
+        val all = Distortion.custom.toMutableMap()
+        val list = (all[lensId] ?: emptyList()).filter { kotlin.math.abs(it.first - focal) > 0.05 } + listOfNotNull(k1?.let { focal to it })
+        if (list.isEmpty()) all.remove(lensId) else all[lensId] = list
+        Distortion.custom = all
+        p.edit().putString("customDistortion", all.flatMap { (id, l) -> l.map { "$id\t${it.first}\t${it.second}" } }.joinToString("\n")).apply()
+        distortionVersion++
+    }
+    fun chooseScope(k: ScopeKind) { scope = k; p.edit().putString("scope", k.code).apply() }
     fun chooseDefaultAspect(a: String) { defaultAspect = a; p.edit().putString("defaultAspect", a).apply() }
     fun chooseDefaultMode(id: String?) { defaultModeId = id; p.edit().putString("defaultModeId", id).apply() }
     /** True once a lens has been picked on this phone (otherwise a quick recce starts with the generic prime set). */

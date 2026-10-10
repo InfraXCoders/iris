@@ -2,8 +2,10 @@
 
 The app's lens database, camera database and coverage tool read two plain CSV files:
 
-- `RecceKit/Sources/RecceKit/Data/lenses.csv`: 729 lenses: 294 anamorphic primes (phase 1), 320 spherical cine
-  primes, 60 cine zooms and 55 photo lenses (phase 2)
+- `RecceKit/Sources/RecceKit/Data/lenses.csv`: 765 lenses: 294 anamorphic primes (phase 1), 332 spherical cine
+  primes, 84 cine zooms and 55 photo lenses (phase 2)
+- `android/core/src/main/resources/data/distortion.csv` (Android): distortion profiles for 40 photo lenses, from
+  the Lensfun database (CC BY-SA 3.0, see "Lens distortion" below)
 - `RecceKit/Sources/RecceKit/Data/cameras.csv`: 54 cameras, 285 recording modes
 
 Open them in Numbers or Excel, edit, save as CSV (UTF-8), then run `bash test.command`.
@@ -44,8 +46,9 @@ Use a new unique `id` for a new lens. Keep existing ids: saved shots refer to th
 - Laowa: most per-lens specs are images on the maker's site, so many cells are empty.
 - Sony FX6/FX9 and DJI Ronin 4D: no per-mode sizes published; the FX6 keeps its original built-in sensor size.
 - Some crop-mode sizes are computed from pixel pitch (noted per row), e.g. all Blackmagic modes.
-- Phase 2: **Angenieux** (Optimo, Optimo Style, Ultra 12x, EZ): angenieux.com could not be read, so no rows yet.
-  ARRI Alura and Fujinon Duvo not researched. Cooke Panchro/i Classic (S35) and S4/i 65SF not included.
+- Angenieux: most product-sheet PDFs are blocked to robots, so rows come from the HTML product pages. No usable
+  source for Optimo Style 30-76, Optimo 15-40 / 28-340 / older 25-250; legacy pages often name no mount.
+  Optimo Prime weights are published as upper limits ("<"). ARRI Alura and Fujinon Duvo not researched. Cooke Panchro/i Classic (S35) and S4/i 65SF not included.
 - Phase 2: many makers publish no numeric image circle (Master/Ultra Prime, Supreme, CP.3, photo lenses); coverage
   then uses the nominal circle for the format. Signature Prime 46 mm is ARRI's "LPL covers up to 46 mm" statement.
 - Phase 2: DZOFilm spec tables merge cells, so several close-focus/length values and the Arles T-stops are empty.
@@ -135,10 +138,36 @@ Use a new unique `id` for a new lens. Keep existing ids: saved shots refer to th
 | Meike | FF Prime Cine | 16, 24, 35, 50, 85, 105, 135 |
 | Meike | S35 Prime Cine | 12, 18, 25, 35, 50, 75, 100 |
 
+| Angenieux | Optimo Prime | 18, 21, 24, 28, 32, 40, 50, 60, 75, 100, 135, 200 |
+
 ## Lenses (phase 2: cine zooms)
 
 | Maker | Series | Focal range (mm) | Stop |
 |---|---|---|---|
+| Angenieux | Optimo Ultra 12x S35 | 24–290 | T2.8 |
+| Angenieux | Optimo Ultra 12x U35 | 26–320 | T3.1 |
+| Angenieux | Optimo Ultra 12x FF/VV | 36–435 | T4.2 |
+| Angenieux | Optimo Ultra Compact FF/VV | 37–102 | T2.9 |
+| Angenieux | Optimo Ultra Compact U35 | 28–76 | T2.2 |
+| Angenieux | Optimo Ultra Compact FF/VV | 21–56 | T2.9 |
+| Angenieux | Optimo Ultra Compact U35 | 16–42 | T2.2 |
+| Angenieux | Type EZ-1 FF/VV | 45–135 | T3.0 |
+| Angenieux | Type EZ-1 S35 | 30–90 | T2.0 |
+| Angenieux | Type EZ-2 FF/VV | 22–60 | T3.0 |
+| Angenieux | Type EZ-2 S35 | 15–40 | T2.0 |
+| Angenieux | Type EZ-3 FF/VV | 68–250 | T3.5 |
+| Angenieux | Type EZ-3 S35 | 45–165 | T2.3 |
+| Angenieux | Optimo Style | 25–250 | T3.5 |
+| Angenieux | Optimo Style | 16–40 | T2.8 |
+| Angenieux | Optimo Style | 48–130 | T3.0 |
+| Angenieux | Optimo | 24–290 | T2.8 |
+| Angenieux | Optimo | 28–76 | T2.6 |
+| Angenieux | Optimo | 45–120 | T2.8 |
+| Angenieux | Optimo | 19.5–94 | T2.6 |
+| Angenieux | Optimo Anamorphic A2S | 56–152 | T4.0 (2x anamorphic) |
+| Angenieux | Optimo Anamorphic A2S | 42–420 | T4.5 (2x anamorphic) |
+| Angenieux | Optimo Anamorphic A2S | 44–440 | T4.5 (2x anamorphic) |
+| Angenieux | Optimo Anamorphic A2S | 30–72 | T4.0 (2x anamorphic) |
 | ARRI | Signature Zoom | 16–32 | T2.8 |
 | ARRI | Signature Zoom | 24–75 | T2.8 |
 | ARRI | Signature Zoom | 45–135 | T2.8 |
@@ -318,6 +347,21 @@ Use a new unique `id` for a new lens. Keep existing ids: saved shots refer to th
 | Kinefinity | MAVO Edge 8K | 6 |
 | DJI | Ronin 4D Zenmuse X9-6K | 0 (no published sizes, hidden) |
 | DJI | Ronin 4D Zenmuse X9-8K | 0 (no published sizes, hidden) |
+
+## Lens distortion
+
+Distortion profiles come from the [Lensfun](https://github.com/lensfun/lensfun) database (measured calibrations,
+licensed CC BY-SA 3.0; this derived file `distortion.csv` is under the same licence). Only lenses with the same
+optical design are matched (e.g. Lensfun's "Canon EF 24-70mm f/2.8L II USM" for our `canon_ef_24_70_f28l_ii`);
+lenses without an exact match have no profile. Coefficients are kept as published (ptlens a, b, c or poly3 k1) with
+the calibration crop factor and aspect ratio; the app rescales them to focal-length units the same way Lensfun does.
+Cine lens makers don't publish distortion data, so cine lenses have no profile. Refresh: `tools/lensfun_extract.py`.
+
+## Focus and depth of field
+
+Thin-lens formulas with a circle of confusion of sensor-area diagonal / 1500 (0.018 mm on a Pocket 6K, 0.029 mm
+full frame). T-stops are used as the stop (slightly deeper than the true f-number result). The close-focus
+distance from the lens data warns when the subject is closer than the lens can focus.
 
 ## Next phases
 

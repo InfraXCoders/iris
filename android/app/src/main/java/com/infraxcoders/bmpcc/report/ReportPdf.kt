@@ -54,7 +54,7 @@ object ReportPdf {
         }
         page { summary(it, s) }
         for (scene in s.sortedScenes) for (shot in scene.sortedShots) {
-            page { shotPage(it, scene, shot, s.sortedNotes.filter { n -> n.shotId == shot.id }) }
+            page { shotPage(it, scene, shot, s.sortedNotes.filter { n -> n.shotId == shot.id }, s.latitude, s.longitude) }
         }
         if (s.voiceNotes.isNotEmpty()) page { notesPage(it, s) }
         val file = File(RecceStore.exportsDir, "${RecceStore.safeName(s.projectName)}-${RecceStore.safeName(s.locationName)}-Recce.pdf")
@@ -127,7 +127,7 @@ object ReportPdf {
         if (s.scenes.size > 20) w.line("+ ${s.scenes.size - 20} more scenes", 8f, color = Color.GRAY)
     }
 
-    private fun shotPage(w: Writer, scene: RecceScene, shot: RecceShot, notes: List<RecceNote>) {
+    private fun shotPage(w: Writer, scene: RecceScene, shot: RecceShot, notes: List<RecceNote>, lat: Double? = null, lon: Double? = null) {
         w.line("Scene ${scene.sceneNumber} · Shot ${shot.shotNumber}", 16f, true)
         w.line("${scene.heading} · ${shot.shotType.longName} · ${shot.cameraMovement.label}", 10f, color = Color.GRAY)
         val refs = shot.references.sortedBy { it.timestamp }
@@ -181,7 +181,15 @@ object ReportPdf {
         w.kv("Subject", shot.subjectPosition, rx, colW)
         w.kv("Height", shot.cameraHeight, rx, colW)
         w.kv("Distance", shot.estimatedDistance?.let { fmt("%.1f m", it) } ?: "", rx, colW)
+        com.infraxcoders.bmpcc.core.ShotOptics.depthOfField(shot)?.let { d ->
+            w.kv("Depth of field", com.infraxcoders.bmpcc.core.ShotOptics.dofText(d).removePrefix("DoF ") + if (d.tooClose) " (closer than lens focuses)" else "", rx, colW)
+        }
         w.kv("Subject moves", shot.subjectMovement, rx, colW)
+        shot.lut?.let { w.kv("LUT", com.infraxcoders.bmpcc.data.LutStore.nameOf(it) ?: it, rx, colW) }
+        shot.plannedTime?.let { t ->
+            val sun = if (lat != null && lon != null) " · sun " + com.infraxcoders.bmpcc.ui.sunText(com.infraxcoders.bmpcc.core.Solar.position(t, lat, lon)) else ""
+            w.kv("Planned time", com.infraxcoders.bmpcc.ui.clockText(t) + sun, rx, colW)
+        }
         if (shot.markers.isNotEmpty()) {
             w.y += 8; w.y += w.text("MARKERS", 8f, true, accent, x = rx, w = colW) + 2
             shot.markers.take(8).forEach { m -> w.kv(m.type.label, "${(m.x * 100).toInt()}% across, ${(m.y * 100).toInt()}% down", rx, colW) }

@@ -16,8 +16,8 @@ import kotlin.math.tan
 /** Sun position: azimuth clockwise from true north, elevation above the horizon (degrees). */
 data class SolarPosition(val azimuth: Double, val elevation: Double) {
     val compass: String get() = Solar.compass(azimuth)
-    /** Heading to point the camera so the sun is directly behind the subject. */
-    val backlightHeading: Double get() = (azimuth + 180) % 360
+    /** Heading to point the camera so the sun is directly behind the subject: towards the sun. */
+    val backlightHeading: Double get() = ((azimuth % 360) + 360) % 360
 }
 
 /** A time range in epoch milliseconds. */
