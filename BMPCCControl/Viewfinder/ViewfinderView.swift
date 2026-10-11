@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 import RecceKit
 
 /// How the phone picture's exposure follows the shot (same three choices as the Android app).
@@ -80,6 +81,8 @@ struct ViewfinderView: View {
     @Environment(\.modelContext) private var context
     @StateObject private var camera = CameraController()
     @StateObject private var motion = LevelMotion()
+    @StateObject private var scopeModel = ScopeModel()
+    @StateObject private var luts = LutLibrary.shared
 
     @AppStorage("vf.thirds") private var showThirds = true
     @AppStorage("vf.center") private var showCenter = false
@@ -100,8 +103,24 @@ struct ViewfinderView: View {
     @State private var message: String?
     @State private var chipOpen = false
     @State private var lastLayout = ViewfinderLayout()
+    // Live picture tools (iPhone): LUT, false colour, zebras, focus peaking, scopes.
+    @AppStorage("vf.falseColour") private var falseColourOn = false
+    @AppStorage("vf.zebras") private var zebrasOn = false
+    @AppStorage("vf.zebraLevel") private var zebraLevel = Zebra.defaultLevel
+    @AppStorage("vf.peaking") private var peakingOn = false
+    @AppStorage("vf.peakingColour") private var peakingColourRaw = PeakingColour.red.rawValue
+    @AppStorage("vf.peakingLevel") private var peakingLevelRaw = PeakingLevel.medium.rawValue
+    @AppStorage("vf.scope") private var scopeRaw = ScopeKind.none.rawValue
+    @State private var loadedLut: LoadedLut?
+    @State private var lutCompare = false
+    @State private var lutSplit = 0.5
+    @State private var importingLut = false
+
+    private struct LoadedLut { let id: String; let lut: Lut3D }
 
     private var exposureMode: PhoneExposureMode { PhoneExposureMode(rawValue: exposureModeRaw) ?? .match }
+    private var scopeKind: ScopeKind { ScopeKind(rawValue: scopeRaw) ?? ScopeKind.none }
+    private var toolsOn: Bool { falseColourOn || zebrasOn || peakingOn || scopeKind != ScopeKind.none }
     private var focals: [Double] { FocalOptions.focals(shot.lens) }
     private var margin: Double {
         if compare, let minOther = compareFocals().min() { return max(1, shot.focalMm / minOther) * 1.03 }
@@ -113,9 +132,15 @@ struct ViewfinderView: View {
             let landscape = geo.size.width > geo.size.height
             let layout = ViewfinderLayout(size: geo.size, reference: shot.reference, camera: camera, margin: margin,
                                           fixedZoom: (locked || !autoZoom) ? camera.zoom : nil)
+            let picture = pictureSettings(layout, width: Double(geo.size.width))
             ZStack {
                 Color.black
                 CameraPreview(controller: camera)
+                #if os(iOS)
+                if picture.drawsPicture && camera.status == .running {
+                    LivePictureView(feed: camera.feed).allowsHitTesting(false)
+                }
+                #endif
                 FrameOverlay(layout: layout, locked: locked, showThirds: showThirds, showCenter: showCenter, showSafe: showSafe,
                              maskOpacity: surroundings ? 0.3 : 0.55, label: frameLabel, approximate: camera.fovSource == .assumed,
                              markers: shot.markers)
@@ -125,11 +150,22 @@ struct ViewfinderView: View {
                     .contentShape(Rectangle())
                     .onTapGesture(coordinateSpace: .local) { point in addMarker(at: point, layout: layout) }
                     .allowsHitTesting(markerMode != nil)
-                if flash { Color.white.opacity(0.6).allowsHitTesting(false) }
+                Group {
+                    if lutCompare && picture.lut != nil { SplitHandle(fraction: $lutSplit) }
+                    if flash { Color.white.opacity(0.6).allowsHitTesting(false) }
+                }
                 if landscape { landscapeHUD(layout) } else { portraitHUD(layout) }
+                if picture.scope != ScopeKind.none && camera.status == .running {
+                    VStack {
+                        Spacer()
+                        HStack { ScopePanel(model: scopeModel, kind: picture.scope); Spacer() }
+                    }
+                    .padding(.leading, landscape ? 70 : 10).padding(.bottom, landscape ? 60 : 230)
+                }
                 statusOverlay
             }
-            .onAppear { lastLayout = layout }
+            .onAppear { lastLayout = layout; applyPicture(picture) }
+            .onChange(of: picture) { _, p in applyPicture(p) }
             .onChange(of: layout.cgFrame) { _, _ in lastLayout = layout }
             .onChange(of: layout.zoom) { _, z in if autoZoom && !locked { camera.setZoom(z) } }
             .onChange(of: camera.status) { _, s in if s == .running, autoZoom, !locked { camera.setZoom(layout.zoom, animated: false) } }
@@ -137,11 +173,19 @@ struct ViewfinderView: View {
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .task {
+            camera.feed.attach(scopes: scopeModel)
             await camera.start()
             motion.start()
             applyExposure()
         }
-        .onDisappear { camera.stop(); motion.stop() }
+        .task(id: shot.lut) { await loadLut() }
+        .onDisappear { camera.setPictureActive(false); camera.stop(); motion.stop() }
+        .fileImporter(isPresented: $importingLut, allowedContentTypes: [UTType(filenameExtension: "cube") ?? .data, .plainText]) { result in
+            switch result {
+            case .success(let url): Task { await importLut(url) }
+            case .failure(let error): show(error.localizedDescription)
+            }
+        }
         .onChange(of: exposureKey) { _, _ in applyExposure() }
         .onChange(of: camera.status) { _, _ in applyExposure() }
         .sheet(isPresented: $showSettings) { settingsSheet }
@@ -220,8 +264,10 @@ struct ViewfinderView: View {
             Spacer()
             VStack(spacing: 1) {
                 Text(shot.focalLength).font(.system(size: landscape ? 22 : 30, weight: .regular, design: .monospaced)).foregroundStyle(Color(red: 0.79, green: 0.85, blue: 1))
-                if landscape { exposureLine } else if let ref = shot.reference {
-                    Text("H-FOV \(Int(ref.deliveredFov.horizontal.rounded()))°").font(.caption2.monospaced()).foregroundStyle(Color(red: 0.69, green: 0.75, blue: 0.9))
+                if landscape { exposureLine }
+                let sub = subtitle(landscape: landscape)
+                if !sub.isEmpty {
+                    Text(sub).font(.caption2.monospaced()).foregroundStyle(Color(red: 0.69, green: 0.75, blue: 0.9)).lineLimit(1)
                 }
             }
             Spacer()
@@ -229,6 +275,14 @@ struct ViewfinderView: View {
             aspectMenu
         }
         .padding(.horizontal, 14)
+    }
+
+    /// "H-FOV 51° · Teal & Orange" (the angle is in the exposure line's place in landscape).
+    private func subtitle(landscape: Bool) -> String {
+        var parts: [String] = []
+        if !landscape, let ref = shot.reference { parts.append("H-FOV \(Int(ref.deliveredFov.horizontal.rounded()))°") }
+        if let name = luts.name(shot.lut) { parts.append(name) }
+        return parts.joined(separator: " · ")
     }
 
     private var cameraPill: some View {
@@ -297,6 +351,7 @@ struct ViewfinderView: View {
                 .background(warn ? Color(red: 0.54, green: 0.23, blue: 0).opacity(0.85) : Color.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
                 .onTapGesture { chipOpen.toggle() }
             }
+            if falseColourOn && !camera.isCinemaCameraFeed { FalseColourLegend() }
             if let message { Text(message).hudChip().transition(.opacity) }
             if let mode = markerMode { Label("Tap inside the frame: \(mode.label)", systemImage: mode.symbol).hudChip(true) }
         }
@@ -379,17 +434,76 @@ struct ViewfinderView: View {
     @ViewBuilder private var toolButtons: some View {
         roundButton("Grid", on: showThirds) { showThirds.toggle() }
         roundButton("Level", on: showLevel) { showLevel.toggle() }
+        #if os(iOS)
+        lutMenu
+        expoMenu
+        #else
         roundButton("Expo", on: exposureMode == .match) { showExposure = true }
+        #endif
         roundButton("Setup", on: false) { showSettings = true }
     }
 
     private func roundButton(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).font(.system(size: 10, weight: .bold)).frame(width: 42, height: 42)
-                .background(on ? Color.blue : Color.white.opacity(0.9), in: Circle())
-                .foregroundStyle(on ? Color.white : Color.black)
-        }
-        .buttonStyle(.plain)
+        Button(action: action) { roundLabel(title, on: on) }
+            .buttonStyle(.plain)
+    }
+
+    private func roundLabel(_ title: String, on: Bool) -> some View {
+        Text(title).font(.system(size: 10, weight: .bold)).frame(width: 42, height: 42)
+            .background(on ? Color.blue : Color.white.opacity(0.9), in: Circle())
+            .foregroundStyle(on ? Color.white : Color.black)
+    }
+
+    /// The shot's look: built-in looks and imported .cube files, before / after, and what the LUT expects as input.
+    private var lutMenu: some View {
+        Menu {
+            Button { setLut(nil) } label: {
+                if shot.lut == nil { Label("No LUT", systemImage: "checkmark") } else { Text("No LUT") }
+            }
+            ForEach(luts.entries) { e in
+                Button { setLut(e.id) } label: {
+                    let title = e.name + (e.builtIn ? "" : " (.cube)")
+                    if e.id == shot.lut { Label(title, systemImage: "checkmark") } else { Text(title) }
+                }
+            }
+            Divider()
+            if let id = shot.lut {
+                Toggle("Before / after", isOn: $lutCompare)
+                Picker("LUT expects", selection: Binding(get: { luts.input(id) }, set: { luts.setInput($0, for: id) })) {
+                    ForEach(LutInput.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+            }
+            Button("Import a .cube LUT…") { importingLut = true }
+        } label: { roundLabel("LUT", on: shot.lut != nil) }
+    }
+
+    /// False colour, zebras, focus peaking and the scopes, plus the exposure settings.
+    private var expoMenu: some View {
+        Menu {
+            Toggle("False colour", isOn: $falseColourOn)
+            Toggle("Zebras", isOn: $zebrasOn)
+            if zebrasOn {
+                Picker("Zebra level", selection: $zebraLevel) {
+                    ForEach(Zebra.levels, id: \.self) { Text("\($0)%").tag($0) }
+                }
+            }
+            Toggle("Focus peaking", isOn: $peakingOn)
+            if peakingOn {
+                Picker("Peaking colour", selection: $peakingColourRaw) {
+                    ForEach(PeakingColour.allCases, id: \.self) { Text($0.label).tag($0.rawValue) }
+                }
+                Picker("Peaking sensitivity", selection: $peakingLevelRaw) {
+                    ForEach(PeakingLevel.allCases, id: \.self) { Text($0.label).tag($0.rawValue) }
+                }
+            }
+            Divider()
+            Picker("Scope", selection: $scopeRaw) {
+                ForEach(ScopeKind.allCases, id: \.self) { Text($0.label).tag($0.rawValue) }
+            }
+            Divider()
+            Button("Exposure settings…") { showExposure = true }
+            Text("Measures the phone's picture (exposed to follow ISO, shutter, ND and iris), through the LUT. A guide for the scene, not the camera's own signal. Peaking shows what is sharp for the phone's lens.")
+        } label: { roundLabel("Expo", on: toolsOn) }
     }
 
     private var markerMenu: some View {
@@ -505,6 +619,60 @@ struct ViewfinderView: View {
     private var frameLabel: String {
         [shot.focalLength.isEmpty ? nil : shot.focalLength, shot.aspectRatio, shot.reference.map { "\(Int($0.deliveredFov.horizontal.rounded()))°" }]
             .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    // MARK: - live picture
+
+    private func pictureSettings(_ layout: ViewfinderLayout, width: Double) -> PictureSettings {
+        var p = PictureSettings()
+        #if os(iOS)
+        guard !camera.isCinemaCameraFeed else { return p }
+        if let id = shot.lut, let loaded = loadedLut, loaded.id == id {
+            p.lut = loaded.lut
+            p.input = luts.input(id)
+            p.lutKey = "\(id)|\(p.input.rawValue)"
+            if lutCompare, layout.video.width > 0 { p.split = (lutSplit * width - layout.video.x) / layout.video.width }
+        }
+        p.falseColour = falseColourOn
+        p.zebraLevel = zebrasOn ? zebraLevel : nil
+        p.peaking = peakingOn ? (PeakingLevel(rawValue: peakingLevelRaw) ?? .medium) : nil
+        p.peakingColour = PeakingColour(rawValue: peakingColourRaw) ?? .red
+        p.scope = scopeKind
+        let c = Scopes.crop(frame: shot.reference == nil ? nil : layout.frame, video: layout.video)
+        p.crop = CGRect(x: c.0, y: c.1, width: c.2 - c.0, height: c.3 - c.1)
+        #endif
+        return p
+    }
+
+    private func applyPicture(_ p: PictureSettings) {
+        camera.feed.update(p)
+        camera.setPictureActive(p.active)
+    }
+
+    private func setLut(_ id: String?) {
+        shot.lut = id
+        shot.touch()
+        if id == nil { lutCompare = false }
+    }
+
+    /// Reads the shot's LUT in the background (files are parsed once, then cached).
+    private func loadLut() async {
+        guard let id = shot.lut else { loadedLut = nil; lutCompare = false; return }
+        if loadedLut?.id == id { return }
+        let lut = await Task.detached(priority: .userInitiated) { LutFiles.load(id) }.value
+        guard shot.lut == id else { return }
+        loadedLut = lut.map { LoadedLut(id: id, lut: $0) }
+        if lut == nil { show("This LUT couldn't be read.") }
+    }
+
+    private func importLut(_ url: URL) async {
+        do {
+            let id = try await luts.importCube(from: url)
+            setLut(id)
+            show("LUT added: \(luts.name(id) ?? "LUT")")
+        } catch {
+            show(error.localizedDescription)
+        }
     }
 
     // MARK: - exposure
@@ -791,6 +959,126 @@ struct FrameOverlay: View {
                     .position(x: layout.cgFrame.minX + layout.cgFrame.width * m.x,
                               y: layout.cgFrame.minY + layout.cgFrame.height * m.y)
             }
+        }
+    }
+}
+
+
+// MARK: - live picture views
+
+private func colour(_ argb: UInt32) -> Color {
+    Color(red: Double((argb >> 16) & 0xFF) / 255, green: Double((argb >> 8) & 0xFF) / 255, blue: Double(argb & 0xFF) / 255)
+}
+
+/// The false colour key: band colours and their levels (ARRI's published bands).
+struct FalseColourLegend: View {
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(FalseColour.bands, id: \.name) { b in
+                RoundedRectangle(cornerRadius: 2).fill(colour(b.argb)).frame(width: 9, height: 9)
+                Text(b.label.replacingOccurrences(of: "%", with: "")).font(.system(size: 9, design: .monospaced)).foregroundStyle(.white)
+            }
+            Text("%").font(.system(size: 9)).foregroundStyle(.white)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(Color.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// Waveform, RGB parade or histogram of the picture inside the frame, with the share of clipped and crushed pixels.
+/// Tap to enlarge.
+struct ScopePanel: View {
+    @ObservedObject var model: ScopeModel
+    let kind: ScopeKind
+    @State private var big = false
+
+    var body: some View {
+        let w: CGFloat = big ? 250 : 140, h: CGFloat = big ? 130 : 70
+        let result = model.result?.kind == kind ? model.result : nil
+        VStack(alignment: .leading, spacing: 2) {
+            ZStack(alignment: .topLeading) {
+                Canvas { ctx, size in
+                    let grid = Color.white.opacity(0.33)
+                    if kind == .histogram {
+                        for f in [0.25, 0.5, 0.75] {
+                            var p = Path(); p.move(to: CGPoint(x: size.width * f, y: 0)); p.addLine(to: CGPoint(x: size.width * f, y: size.height))
+                            ctx.stroke(p, with: .color(grid), lineWidth: 1)
+                        }
+                        if let hist = result?.histogram {
+                            let peak = Double(hist.peak)
+                            func trace(_ bins: [Int]) -> Path {
+                                var p = Path()
+                                let step = size.width / CGFloat(max(bins.count - 1, 1))
+                                p.move(to: CGPoint(x: 0, y: size.height))
+                                for (i, n) in bins.enumerated() { p.addLine(to: CGPoint(x: CGFloat(i) * step, y: size.height * CGFloat(1 - Double(n) / peak))) }
+                                p.addLine(to: CGPoint(x: size.width, y: size.height)); p.closeSubpath()
+                                return p
+                            }
+                            ctx.fill(trace(hist.r), with: .color(Color(red: 1, green: 0.25, blue: 0.25).opacity(0.4)))
+                            ctx.fill(trace(hist.g), with: .color(Color(red: 0.25, green: 1, blue: 0.25).opacity(0.4)))
+                            ctx.fill(trace(hist.b), with: .color(Color(red: 0.25, green: 0.5, blue: 1).opacity(0.4)))
+                            ctx.stroke(trace(hist.y), with: .color(.white.opacity(0.87)), lineWidth: 1.5)
+                        }
+                    } else {
+                        for f in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                            let y = size.height * (1 - f)
+                            var p = Path(); p.move(to: CGPoint(x: 0, y: y)); p.addLine(to: CGPoint(x: size.width, y: y))
+                            ctx.stroke(p, with: .color(grid), style: StrokeStyle(lineWidth: 1, dash: f == 0 || f == 1 ? [] : [4, 4]))
+                        }
+                        if kind == .parade {
+                            for f in [1.0 / 3, 2.0 / 3] {
+                                var p = Path(); p.move(to: CGPoint(x: size.width * f, y: 0)); p.addLine(to: CGPoint(x: size.width * f, y: size.height))
+                                ctx.stroke(p, with: .color(grid), lineWidth: 1)
+                            }
+                        }
+                    }
+                }
+                if kind != .histogram, let img = result?.image {
+                    Image(decorative: img, scale: 1).resizable().interpolation(.medium)
+                }
+                if result == nil { Text("…").foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity) }
+                if kind != .histogram {
+                    Text("100").font(.system(size: 8)).foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            .frame(width: w, height: h)
+            if let hist = result?.histogram {
+                Text((big ? kind.label + " · " : "") + String(format: "Clip %.1f%% · Crush %.1f%%", hist.clipped * 100, hist.crushed * 100))
+                    .font(.system(size: big ? 10 : 8, design: .monospaced)).foregroundStyle(.white.opacity(0.85)).lineLimit(1)
+            }
+        }
+        .padding(4)
+        .background(Color.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+        .onTapGesture { big.toggle() }
+    }
+}
+
+/// Draggable divider for the LUT before / after view (left: no LUT, right: LUT).
+struct SplitHandle: View {
+    @Binding var fraction: Double
+
+    var body: some View {
+        GeometryReader { g in
+            let x = CGFloat(fraction) * g.size.width, midY = g.size.height / 2
+            ZStack {
+                Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: g.size.height)) }
+                    .stroke(.white, lineWidth: 2)
+                    .allowsHitTesting(false)
+                Circle().fill(Theme.accent).frame(width: 22, height: 22).overlay(Circle().stroke(.white, lineWidth: 3))
+                    .position(x: x, y: midY).allowsHitTesting(false)
+                Text("BEFORE").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                    .position(x: max(30, x - 40), y: midY + 28).allowsHitTesting(false)
+                Text("AFTER").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                    .position(x: x + 34, y: midY + 28).allowsHitTesting(false)
+                Color.clear
+                    .frame(width: 48, height: g.size.height * 0.6)
+                    .contentShape(Rectangle())
+                    .position(x: x, y: midY)
+                    .gesture(DragGesture(coordinateSpace: .named("split")).onChanged { v in
+                        fraction = min(max(Double(v.location.x / max(g.size.width, 1)), 0.05), 0.95)
+                    })
+            }
+            .coordinateSpace(.named("split"))
         }
     }
 }

@@ -65,7 +65,8 @@ enum RecceExport {
                                 ShotMarkerDoc(id: $0.id, shotId: shot.id, type: $0.markerType, x: $0.x, y: $0.y, label: $0.label)
                             },
                             creationTimestamp: RecceJSON.millis(shot.created),
-                            modificationTimestamp: RecceJSON.millis(shot.modified))
+                            modificationTimestamp: RecceJSON.millis(shot.modified),
+                            lut: shot.lut)
                     })
             },
             creationTimestamp: RecceJSON.millis(s.created), modificationTimestamp: RecceJSON.millis(s.modified),
@@ -132,6 +133,7 @@ enum RecceExport {
                 shot.subjectMovement = d.subjectMovement
                 shot.estimatedDistance = d.estimatedDistance
                 shot.notes = d.notes
+                shot.lut = d.lut
                 shot.modified = RecceJSON.date(d.modificationTimestamp)
                 context.insert(shot)
                 shot.scene = scene

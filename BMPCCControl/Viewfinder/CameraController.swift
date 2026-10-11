@@ -41,7 +41,11 @@ final class CameraController: NSObject, ObservableObject {
     @Published var availableDevices: [AVCaptureDevice] = []
 
     let session = AVCaptureSession()
+    /// The live picture with LUT and exposure tools, and the scopes (frames from `videoOutput`).
+    let feed = PictureFeed()
     private let photoOutput = AVCapturePhotoOutput()
+    private let videoOutput = AVCaptureVideoDataOutput()
+    private var pictureActive = false
     private let sessionQueue = DispatchQueue(label: "bmpcc.camera.session")
     private var device: AVCaptureDevice?
     private var input: AVCaptureDeviceInput?
@@ -142,6 +146,14 @@ final class CameraController: NSObject, ObservableObject {
         session.addInput(newInput)
         input = newInput
         if !session.outputs.contains(photoOutput), session.canAddOutput(photoOutput) { session.addOutput(photoOutput) }
+        #if os(iOS)
+        if !session.outputs.contains(videoOutput) {
+            videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+            videoOutput.alwaysDiscardsLateVideoFrames = true
+            videoOutput.deliversPreviewSizedOutputBuffers = true
+            if session.canAddOutput(videoOutput) { session.addOutput(videoOutput) }
+        }
+        #endif
         device = dev
         deviceName = dev.localizedName
         readGeometry(dev)
@@ -239,6 +251,15 @@ final class CameraController: NSObject, ObservableObject {
         return zoom / main.zoom
     }
 
+    // MARK: live picture (LUT, false colour, zebras, peaking, scopes)
+
+    /// Frames go to the picture feed only while a tool is on (saves battery otherwise).
+    func setPictureActive(_ on: Bool) {
+        guard on != pictureActive else { return }
+        pictureActive = on
+        videoOutput.setSampleBufferDelegate(on ? feed : nil, queue: on ? feed.queue : nil)
+    }
+
     // MARK: exposure
 
     /// Phone auto-exposure, made brighter or darker by `bias` stops.
@@ -290,6 +311,7 @@ final class CameraController: NSObject, ObservableObject {
 
     private func apply(angle: CGFloat, to layer: AVCaptureVideoPreviewLayer) {
         if let conn = layer.connection, conn.isVideoRotationAngleSupported(angle) { conn.videoRotationAngle = angle }
+        feed.setRotation(angle: angle)
         let a = Int(angle.rounded()) % 360
         isPortrait = (a == 90 || a == 270)
     }

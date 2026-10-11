@@ -116,6 +116,8 @@ final class RecceShot {
     var subjectMovement: String
     var estimatedDistance: Double?
     var notes: String
+    /// Look (LUT) for this shot: "builtin:<name>" or "file:<file name>" (same as Android).
+    var lut: String?
     var created: Date
     var modified: Date
     var scene: RecceScene?
