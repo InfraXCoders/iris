@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import RecceKit
 import CoreMedia
 import SwiftUI
 
@@ -27,6 +28,16 @@ final class CameraController: NSObject, ObservableObject {
     /// True when the Mac's camera is a Blackmagic cinema camera over USB.
     @Published private(set) var isCinemaCameraFeed = false
     @Published private(set) var fovIsMeasured = false
+    /// Where `baseLongSideFov` comes from (shown in the viewfinder's status chip).
+    @Published private(set) var fovSource: PhoneOptics.Source = .assumed
+    /// Multi-lens cameras: the zoom at which each lens takes over, e.g. [(1, "Ultra-wide"), (2, "Main"), (6, "Tele")].
+    @Published private(set) var lensStops: [(zoom: Double, name: String)] = []
+    /// Manual exposure (for matching the cinema camera's exposure).
+    @Published private(set) var customExposureSupported = false
+    @Published private(set) var isoRange: ClosedRange<Double> = 25...3200
+    @Published private(set) var durationRange: ClosedRange<Double> = (1.0 / 8000)...(1.0 / 2)
+    @Published private(set) var lensAperture: Double = 1.8
+    @Published private(set) var biasRange: ClosedRange<Double> = -2...2
     @Published var availableDevices: [AVCaptureDevice] = []
 
     let session = AVCaptureSession()
@@ -150,16 +161,46 @@ final class CameraController: NSObject, ObservableObject {
             let corrected = Double(format.geometricDistortionCorrectedVideoFieldOfView)
             if corrected > 0 { fov = corrected }
         }
-        baseLongSideFov = fov > 0 ? fov : 70
-        fovIsMeasured = fov > 0
+        // Auto-calibration: the angle the camera reports for its active format, with a 70° fallback.
+        let checked = PhoneOptics.checked(fov > 0 ? fov : nil)
+        baseLongSideFov = checked.fov
+        fovSource = checked.source
+        fovIsMeasured = checked.source == .reported
         minZoom = Double(dev.minAvailableVideoZoomFactor)
         maxZoom = min(Double(dev.maxAvailableVideoZoomFactor), 15)
         zoom = Double(dev.videoZoomFactor)
         isCinemaCameraFeed = false
+        // Which lens a multi-lens camera uses at each zoom (it switches by itself).
+        let switches = dev.virtualDeviceSwitchOverVideoZoomFactors.map { $0.doubleValue }
+        let types = dev.constituentDevices.map { $0.deviceType }
+        if !types.isEmpty {
+            var stops: [(zoom: Double, name: String)] = []
+            for (i, t) in types.enumerated() {
+                let z: Double = i == 0 ? 1 : (i - 1 < switches.count ? switches[i - 1] : 1)
+                let name: String
+                switch t {
+                case .builtInUltraWideCamera: name = "Ultra-wide"
+                case .builtInTelephotoCamera: name = "Tele"
+                default: name = "Main"
+                }
+                stops.append((zoom: z, name: name))
+            }
+            lensStops = stops
+        } else {
+            lensStops = [(zoom: 1, name: dev.deviceType == .builtInUltraWideCamera ? "Ultra-wide" : "Main")]
+        }
+        customExposureSupported = dev.isExposureModeSupported(.custom)
+        isoRange = Double(format.minISO)...max(Double(format.maxISO), Double(format.minISO) + 1)
+        let minD = CMTimeGetSeconds(format.minExposureDuration), maxD = CMTimeGetSeconds(format.maxExposureDuration)
+        if minD > 0, maxD > minD { durationRange = minD...maxD }
+        lensAperture = dev.lensAperture > 0 ? Double(dev.lensAperture) : 1.8
+        biasRange = Double(dev.minExposureTargetBias)...max(Double(dev.maxExposureTargetBias), Double(dev.minExposureTargetBias))
         #else
         let saved = UserDefaults.standard.double(forKey: Self.macFovKey)
         baseLongSideFov = saved > 0 ? saved : 70
         fovIsMeasured = false
+        fovSource = saved > 0 ? .manual : .assumed
+        lensStops = [(zoom: 1, name: "Camera")]
         minZoom = 1; maxZoom = 1; zoom = 1
         isCinemaCameraFeed = dev.localizedName.localizedCaseInsensitiveContains("blackmagic")
         #endif
@@ -184,6 +225,45 @@ final class CameraController: NSObject, ObservableObject {
         } catch {
             // Zoom is a convenience; framing stays correct because frame lines use the zoom actually applied.
         }
+        #endif
+    }
+
+    /// The lens a multi-lens camera is using at the current zoom.
+    var currentLensName: String {
+        lensStops.last(where: { zoom >= $0.zoom - 0.001 })?.name ?? "Main"
+    }
+
+    /// The zoom as the Camera app shows it (main lens = 1×, so the ultra-wide is 0.5×).
+    var displayZoom: Double {
+        guard let main = lensStops.first(where: { $0.name == "Main" }), main.zoom > 0 else { return zoom }
+        return zoom / main.zoom
+    }
+
+    // MARK: exposure
+
+    /// Phone auto-exposure, made brighter or darker by `bias` stops.
+    func setAutoExposure(bias: Double) {
+        #if os(iOS)
+        guard let dev = device else { return }
+        do {
+            try dev.lockForConfiguration()
+            if dev.isExposureModeSupported(.continuousAutoExposure) { dev.exposureMode = .continuousAutoExposure }
+            dev.setExposureTargetBias(Float(min(max(bias, biasRange.lowerBound), biasRange.upperBound)), completionHandler: nil)
+            dev.unlockForConfiguration()
+        } catch {}
+        #endif
+    }
+
+    /// Manual ISO and exposure time (matching the cinema camera's exposure).
+    func setManualExposure(iso: Double, seconds: Double) {
+        #if os(iOS)
+        guard let dev = device, customExposureSupported else { return }
+        do {
+            try dev.lockForConfiguration()
+            let t = CMTime(seconds: min(max(seconds, durationRange.lowerBound), durationRange.upperBound), preferredTimescale: 1_000_000)
+            dev.setExposureModeCustom(duration: t, iso: Float(min(max(iso, isoRange.lowerBound), isoRange.upperBound)), completionHandler: nil)
+            dev.unlockForConfiguration()
+        } catch {}
         #endif
     }
 

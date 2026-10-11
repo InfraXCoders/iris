@@ -92,16 +92,18 @@ public struct RecceSessionDoc: Codable, Equatable, Sendable {
     /// iOS addition: voice/text notes are saved (Android kept them in memory only). Optional, so Android
     /// exports without it still decode.
     public var voiceNotes: [RecceNoteDoc]?
+    /// Buildings / hills around the spot, recorded in the sun planner's camera view (also in Android exports).
+    public var skyline: [SkyPoint]?
 
     public init(id: String, locationName: String, timestamp: Int64, latitude: Double? = nil, longitude: Double? = nil,
                 projectName: String, directorDopNotes: String = "", generalLocationNotes: String = "",
                 scenes: [RecceSceneDoc] = [], creationTimestamp: Int64, modificationTimestamp: Int64,
-                voiceNotes: [RecceNoteDoc]? = nil) {
+                voiceNotes: [RecceNoteDoc]? = nil, skyline: [SkyPoint]? = nil) {
         self.id = id; self.locationName = locationName; self.timestamp = timestamp; self.latitude = latitude
         self.longitude = longitude; self.projectName = projectName; self.directorDopNotes = directorDopNotes
         self.generalLocationNotes = generalLocationNotes; self.scenes = scenes
         self.creationTimestamp = creationTimestamp; self.modificationTimestamp = modificationTimestamp
-        self.voiceNotes = voiceNotes
+        self.voiceNotes = voiceNotes; self.skyline = skyline
     }
 }
 
@@ -153,6 +155,14 @@ public struct RecceShotDoc: Codable, Equatable, Sendable {
     public var markers: [ShotMarkerDoc]
     public var creationTimestamp: Int64
     public var modificationTimestamp: Int64
+    // Fields shared with the Android app (optional, so older files still read).
+    public var cameraId: String?
+    public var lensId: String?
+    public var sensorModeId: String?
+    /// Planned shooting time (ms since 1970), set from the sun planner.
+    public var plannedTime: Int64?
+    /// The shot's look: "builtin:<name>" or "file:<file name>".
+    public var lut: String?
 
     public init(id: String, sceneId: String, shotNumber: String, shotType: ShotType = .ms, cameraPosition: String = "",
                 subjectPosition: String = "", cameraHeight: String = "1.5m", cameraModel: String, lensModel: String,
@@ -161,7 +171,8 @@ public struct RecceShotDoc: Codable, Equatable, Sendable {
                 cameraMovement: CameraMovement = .staticShot, subjectMovement: String = "Static",
                 estimatedDistance: Double? = 1.8, notes: String = "", references: [ShotReferenceDoc] = [],
                 analysis: ShotAnalysisDoc? = nil, markers: [ShotMarkerDoc] = [], creationTimestamp: Int64,
-                modificationTimestamp: Int64) {
+                modificationTimestamp: Int64, cameraId: String? = nil, lensId: String? = nil, sensorModeId: String? = nil,
+                plannedTime: Int64? = nil, lut: String? = nil) {
         self.id = id; self.sceneId = sceneId; self.shotNumber = shotNumber; self.shotType = shotType
         self.cameraPosition = cameraPosition; self.subjectPosition = subjectPosition; self.cameraHeight = cameraHeight
         self.cameraModel = cameraModel; self.lensModel = lensModel; self.focalLength = focalLength; self.aperture = aperture
@@ -170,6 +181,7 @@ public struct RecceShotDoc: Codable, Equatable, Sendable {
         self.estimatedDistance = estimatedDistance; self.notes = notes; self.references = references
         self.analysis = analysis; self.markers = markers
         self.creationTimestamp = creationTimestamp; self.modificationTimestamp = modificationTimestamp
+        self.cameraId = cameraId; self.lensId = lensId; self.sensorModeId = sensorModeId; self.plannedTime = plannedTime; self.lut = lut
     }
 }
 

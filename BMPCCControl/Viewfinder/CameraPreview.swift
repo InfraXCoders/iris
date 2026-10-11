@@ -4,7 +4,8 @@ import AVFoundation
 #if os(iOS)
 import UIKit
 
-/// Shows the camera picture, scaled to fit without cropping (so frame lines can be placed exactly).
+/// Shows the camera picture filling the whole screen (the cinema frame is a mask over it; the viewfinder knows
+/// how much of the picture is cropped and places the frame lines exactly).
 struct CameraPreview: UIViewRepresentable {
     let controller: CameraController
 
@@ -12,7 +13,7 @@ struct CameraPreview: UIViewRepresentable {
         let view = PreviewUIView()
         view.backgroundColor = .black
         view.previewLayer.session = controller.session
-        view.previewLayer.videoGravity = .resizeAspect
+        view.previewLayer.videoGravity = .resizeAspectFill
         controller.attach(previewLayer: view.previewLayer)
         return view
     }

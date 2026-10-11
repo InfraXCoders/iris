@@ -2,189 +2,423 @@ import SwiftUI
 import SwiftData
 import RecceKit
 
-/// Everything the overlay needs to draw, computed with RecceKit (tested there).
+/// How the phone picture's exposure follows the shot (same three choices as the Android app).
+enum PhoneExposureMode: String, CaseIterable, Identifiable {
+    case auto, follow, match
+    var id: String { rawValue }
+    var label: String { switch self { case .auto: return "Phone auto"; case .follow: return "Follow"; case .match: return "Match exactly" } }
+    var detail: String {
+        switch self {
+        case .auto: return "The phone exposes on its own."
+        case .follow: return "The phone's auto-exposure, made brighter or darker by the shot's ISO, shutter, ND and iris."
+        case .match: return "The phone's ISO and shutter are set so its picture gets the same exposure as the cinema camera. Approximate: phone and camera ISO and tone differ."
+        }
+    }
+}
+
+/// Everything the overlay needs to draw, computed with RecceKit (tested there): the camera picture fills the screen,
+/// the cinema frame sits in an area clear of the controls (or, when it is too wide for that, almost the whole screen).
 struct ViewfinderLayout {
-    var video: ScreenRect = ScreenRect(x: 0, y: 0, width: 0, height: 0)
-    var frame: ScreenRect = ScreenRect(x: 0, y: 0, width: 0, height: 0)
+    var video = ScreenRect(x: 0, y: 0, width: 0, height: 0)
+    var area = ScreenRect(x: 0, y: 0, width: 0, height: 0)
+    var frame = ScreenRect(x: 0, y: 0, width: 0, height: 0)
     var lines = FrameLines(widthFraction: 1, heightFraction: 1)
+    var zoom: Double = 1
+    /// The frame's true size when it is wider than the phone shows (partly off screen).
+    var trueFrame: ScreenRect?
+    var view = RecceKit.PreviewView(horizontalFov: 70, verticalFov: 52)
 
     init() {}
 
-    @MainActor init(size: CGSize, reference: ReferenceFrame?, camera: CameraController) {
-        let videoAspect = camera.isPortrait ? 1 / camera.formatAspect : camera.formatAspect
-        video = Viewfinder.aspectFit(contentAspect: videoAspect, containerWidth: Double(size.width), containerHeight: Double(size.height))
-        guard let ref = reference else { frame = video; return }
+    @MainActor init(size: CGSize, reference: ReferenceFrame?, camera: CameraController, margin: Double, fixedZoom: Double?) {
+        let w = Double(size.width), h = Double(size.height)
+        let landscape = w > h
+        let pictureAspect = landscape ? camera.formatAspect : 1 / camera.formatAspect
+        #if os(iOS)
+        video = Monitor.aspectFill(contentAspect: pictureAspect, width: w, height: h)
+        #else
+        video = Viewfinder.aspectFit(contentAspect: pictureAspect, containerWidth: w, containerHeight: h)
+        #endif
+        let bar = min(200, h * 0.3)
+        let controlArea = landscape ? Monitor.centredArea(width: w, height: h, side: 90, bar: 70)
+                                    : Monitor.centredArea(width: w, height: h, side: 10, bar: bar)
+        let fullArea = landscape ? Monitor.centredArea(width: w, height: h, side: 8, bar: 8)
+                                 : Monitor.centredArea(width: w, height: h, side: 4, bar: bar)
+        area = controlArea
+        zoom = camera.zoom
+        guard let ref = reference, w > 0, h > 0 else { frame = video; return }
         if camera.isCinemaCameraFeed {
             // The picture comes from the cinema camera itself: only the delivery-aspect mask applies.
-            lines = FrameLines(widthFraction: ref.deliveredWidthMm / ref.captureWidthMm,
-                               heightFraction: ref.deliveredHeightMm / ref.captureHeightMm)
-        } else {
-            let base = RecceKit.PreviewView.fromFormat(longSideFov: camera.baseLongSideFov, longOverShort: camera.formatAspect,
-                                                       portrait: camera.isPortrait)
-            lines = Viewfinder.frameLines(ref, on: base.zoomed(camera.zoom))
+            lines = FrameLines(widthFraction: ref.deliveredWidthMm / ref.captureWidthMm, heightFraction: ref.deliveredHeightMm / ref.captureHeightMm)
+            area = video
+            frame = Viewfinder.frameRect(lines, in: video)
+            return
         }
-        frame = Viewfinder.frameRect(lines, in: video)
+        view = RecceKit.PreviewView.fromFormat(longSideFov: camera.baseLongSideFov, longOverShort: camera.formatAspect, portrait: !landscape)
+        func layout(_ a: ScreenRect) -> Monitor.Layout {
+            Monitor.layout(reference: ref, view: view, video: video, area: a, minZoom: camera.minZoom, maxZoom: max(camera.maxZoom, camera.minZoom),
+                           margin: margin, fixedZoom: fixedZoom)
+        }
+        var l = layout(controlArea)
+        if !l.lines.fits { l = layout(fullArea); area = fullArea }
+        lines = l.lines; frame = l.frame; zoom = l.zoom
+        if !l.lines.fits {
+            let tw = area.width * l.lines.widthFraction, th = area.height * l.lines.heightFraction
+            trueFrame = ScreenRect(x: area.midX - tw / 2, y: area.midY - th / 2, width: tw, height: th)
+        }
     }
 
     var cgFrame: CGRect { CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height) }
     var cgVideo: CGRect { CGRect(x: video.x, y: video.y, width: video.width, height: video.height) }
 }
 
+private let tStops: [Double] = [0.95, 1.0, 1.2, 1.3, 1.4, 1.5, 1.8, 1.9, 2.0, 2.2, 2.4, 2.5, 2.8, 3.5, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0]
+
 struct ViewfinderView: View {
     @Bindable var shot: RecceShot
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @StateObject private var camera = CameraController()
+    @StateObject private var motion = LevelMotion()
 
     @AppStorage("vf.thirds") private var showThirds = true
-    @AppStorage("vf.center") private var showCenter = true
-    @AppStorage("vf.horizon") private var showHorizon = false
+    @AppStorage("vf.center") private var showCenter = false
+    @AppStorage("vf.level") private var showLevel = true
     @AppStorage("vf.safe") private var showSafe = false
     @AppStorage("vf.autoZoom") private var autoZoom = true
+    @AppStorage("vf.shotSizes") private var showShotSizes = true
+    @AppStorage("vf.compare") private var compare = false
+    @AppStorage("vf.surroundings") private var surroundings = false
+    @AppStorage("vf.distortion") private var showDistortion = true
+    @AppStorage("vf.phoneExposure") private var exposureModeRaw = PhoneExposureMode.match.rawValue
     @AppStorage(CameraController.macFovKey) private var macFov: Double = 70
     @State private var locked = false
     @State private var markerMode: MarkerType?
     @State private var showSettings = false
+    @State private var showExposure = false
     @State private var flash = false
     @State private var message: String?
+    @State private var chipOpen = false
     @State private var lastLayout = ViewfinderLayout()
+
+    private var exposureMode: PhoneExposureMode { PhoneExposureMode(rawValue: exposureModeRaw) ?? .match }
+    private var focals: [Double] { FocalOptions.focals(shot.lens) }
+    private var margin: Double {
+        if compare, let minOther = compareFocals().min() { return max(1, shot.focalMm / minOther) * 1.03 }
+        return surroundings ? 1.35 : 1
+    }
 
     var body: some View {
         GeometryReader { geo in
-            let layout = ViewfinderLayout(size: geo.size, reference: shot.reference, camera: camera)
+            let landscape = geo.size.width > geo.size.height
+            let layout = ViewfinderLayout(size: geo.size, reference: shot.reference, camera: camera, margin: margin,
+                                          fixedZoom: (locked || !autoZoom) ? camera.zoom : nil)
             ZStack {
                 Color.black
                 CameraPreview(controller: camera)
-                FrameOverlay(layout: layout, locked: locked, showThirds: showThirds, showCenter: showCenter,
-                             showHorizon: showHorizon, showSafe: showSafe, markers: shot.markers)
+                FrameOverlay(layout: layout, locked: locked, showThirds: showThirds, showCenter: showCenter, showSafe: showSafe,
+                             maskOpacity: surroundings ? 0.3 : 0.55, label: frameLabel, approximate: camera.fovSource == .assumed,
+                             markers: shot.markers)
                     .allowsHitTesting(false)
+                extraOverlays(layout).allowsHitTesting(false)
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture(coordinateSpace: .local) { point in addMarker(at: point, layout: layout) }
                     .allowsHitTesting(markerMode != nil)
                 if flash { Color.white.opacity(0.6).allowsHitTesting(false) }
-                VStack(spacing: 0) {
-                    topBar(layout)
-                    Spacer()
-                    if let message { Text(message).hudChip().padding(.bottom, 6).transition(.opacity) }
-                    bottomBar
-                }
-                .padding(12)
+                if landscape { landscapeHUD(layout) } else { portraitHUD(layout) }
                 statusOverlay
             }
             .onAppear { lastLayout = layout }
             .onChange(of: layout.cgFrame) { _, _ in lastLayout = layout }
+            .onChange(of: layout.zoom) { _, z in if autoZoom && !locked { camera.setZoom(z) } }
+            .onChange(of: camera.status) { _, s in if s == .running, autoZoom, !locked { camera.setZoom(layout.zoom, animated: false) } }
         }
-        .ignoresSafeArea(edges: .bottom)
+        .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .task {
             await camera.start()
-            applyAutoZoom()
+            motion.start()
+            applyExposure()
         }
-        .onDisappear { camera.stop() }
-        .onChange(of: shot.focalLength) { _, _ in applyAutoZoom() }
-        .onChange(of: shot.aspectRatio) { _, _ in applyAutoZoom() }
-        .onChange(of: shot.lensId) { _, _ in applyAutoZoom() }
-        .onChange(of: shot.cameraId) { _, _ in applyAutoZoom() }
-        .onChange(of: autoZoom) { _, _ in applyAutoZoom() }
-        .onChange(of: camera.isPortrait) { _, _ in applyAutoZoom() }
+        .onDisappear { camera.stop(); motion.stop() }
+        .onChange(of: exposureKey) { _, _ in applyExposure() }
+        .onChange(of: camera.status) { _, _ in applyExposure() }
         .sheet(isPresented: $showSettings) { settingsSheet }
+        .sheet(isPresented: $showExposure) { exposureSheet }
         #if os(macOS)
         .frame(minWidth: 900, minHeight: 560)
         #endif
     }
 
-    // MARK: top HUD
+    // MARK: - HUD
 
-    private func topBar(_ layout: ViewfinderLayout) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Button { dismiss() } label: { Image(systemName: "xmark").font(.headline).padding(8).background(Theme.panel, in: Circle()) }
-                    .buttonStyle(.plain).foregroundStyle(.white)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(shot.camera.model).font(.caption.bold())
-                    Text(shot.lens.model).font(.caption2).foregroundStyle(.white.opacity(0.75))
-                }
-                .padding(.horizontal, 10).padding(.vertical, 5).background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
-                .foregroundStyle(.white)
+    private func portraitHUD(_ layout: ViewfinderLayout) -> some View {
+        ZStack {
+            VStack(spacing: 6) {
+                topRow(landscape: false)
+                statusColumn(layout)
                 Spacer()
-                Text(shot.focalLength).font(.title3.monospacedDigit().weight(.heavy)).hudChip(true)
-                if let ref = shot.reference {
-                    Text("H \(ref.deliveredFov.horizontal.degreesText)").hudChip()
-                    Text("≈\(Int(Optics.equivalentFocalLength(shot.focalMm, sensorWidthMm: shot.camera.sensorWidthMm).rounded()))mm FF").hudChip()
+                VStack(spacing: 4) {
+                    exposureLine
+                    focusLine
                 }
-                Text(shot.aspectRatio).hudChip()
+                focalChips.padding(.horizontal, 8)
+                HStack {
+                    markerMenu
+                    Spacer()
+                    captureButton
+                    Spacer()
+                    lockButton
+                }
+                .padding(.horizontal, 24)
             }
-            HStack(spacing: 8) {
-                if camera.isCinemaCameraFeed {
-                    Label("Live from \(camera.deviceName)", systemImage: "video.fill").hudChip(true)
-                } else {
-                    Text("Phone zoom \(String(format: "%.1f", camera.zoom))x").hudChip()
-                    Text(camera.fovIsMeasured ? "FOV measured" : "FOV \(Int(camera.baseLongSideFov))° (set in ⚙︎)").hudChip()
+            .padding(.top, 52).padding(.bottom, 30)
+            HStack {
+                VStack(spacing: 8) { shotSizeButtons }.padding(.leading, 10)
+                Spacer()
+                VStack(spacing: 10) { toolButtons }.padding(.trailing, 10)
+            }
+        }
+    }
+
+    private func landscapeHUD(_ layout: ViewfinderLayout) -> some View {
+        ZStack {
+            VStack(spacing: 2) {
+                topRow(landscape: true)
+                Spacer()
+                HStack(spacing: 8) {
+                    shotSizeButtons
+                    focalChips
                 }
-                if !layout.lines.fits && !camera.isCinemaCameraFeed {
-                    Label("Lens is wider than this camera: frame shows only what fits", systemImage: "exclamationmark.triangle.fill")
-                        .hudChip().foregroundStyle(.yellow)
+                .padding(.leading, 70).padding(.trailing, 96)
+            }
+            .padding(.vertical, 10)
+            HStack {
+                VStack(spacing: 8) { toolButtons }.padding(.leading, 14)
+                Spacer()
+                VStack(spacing: 16) {
+                    lockButton
+                    captureButton
+                    markerMenu
                 }
-                if let mode = markerMode { Label("Tap to place: \(mode.label)", systemImage: mode.symbol).hudChip(true) }
+                .padding(.trailing, 14)
+            }
+            VStack {
+                HStack { Spacer(); statusColumn(layout).frame(maxWidth: 320, alignment: .trailing) }
+                    .padding(.top, 50).padding(.trailing, 84)
                 Spacer()
             }
         }
     }
 
-    // MARK: bottom dock
-
-    private var bottomBar: some View {
-        HStack(spacing: 10) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(shot.lens.quickFocalLengths, id: \.self) { f in
-                        Button(ShotPresets.focalText(f)) { setFocal(f) }
-                            .buttonStyle(.plain)
-                            .hudChip(abs(shot.focalMm - f) < 0.5)
-                            .disabled(locked)
-                    }
+    private func topRow(landscape: Bool) -> some View {
+        HStack(spacing: 8) {
+            Button { dismiss() } label: { Image(systemName: "xmark").font(.headline).padding(8).background(Theme.panel, in: Circle()) }
+                .buttonStyle(.plain).foregroundStyle(.white)
+            if !landscape { cameraPill }
+            Spacer()
+            VStack(spacing: 1) {
+                Text(shot.focalLength).font(.system(size: landscape ? 22 : 30, weight: .regular, design: .monospaced)).foregroundStyle(Color(red: 0.79, green: 0.85, blue: 1))
+                if landscape { exposureLine } else if let ref = shot.reference {
+                    Text("H-FOV \(Int(ref.deliveredFov.horizontal.rounded()))°").font(.caption2.monospaced()).foregroundStyle(Color(red: 0.69, green: 0.75, blue: 0.9))
                 }
             }
-            .frame(maxWidth: 360)
+            Spacer()
+            if landscape { cameraPill }
+            aspectMenu
+        }
+        .padding(.horizontal, 14)
+    }
 
-            Menu {
-                ForEach(ShotPresets.aspectRatios, id: \.self) { a in
-                    Button { shot.aspectRatio = a; shot.touch() } label: {
-                        if a == shot.aspectRatio { Label(a, systemImage: "checkmark") } else { Text(a) }
+    private var cameraPill: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(shot.camera.model).font(.caption.bold()).lineLimit(1)
+            Text(shot.lens.model).font(.caption2).foregroundStyle(.white.opacity(0.75)).lineLimit(1)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 5).background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(.white)
+        .frame(maxWidth: 170)
+    }
+
+    private var aspectMenu: some View {
+        Menu {
+            ForEach(ShotPresets.aspectRatios, id: \.self) { a in
+                Button { shot.aspectRatio = a; shot.touch() } label: {
+                    if a == shot.aspectRatio { Label(a, systemImage: "checkmark") } else { Text(a) }
+                }
+            }
+        } label: { Text(shot.aspectRatio).font(.caption.monospaced().weight(.semibold)).hudChip() }
+            .disabled(locked)
+    }
+
+    // MARK: status chip (lens, calibration, warnings)
+
+    private struct Note: Identifiable { let id = UUID(); let short: String; let full: String; let warning: Bool }
+
+    private func notes(_ layout: ViewfinderLayout) -> [Note] {
+        var out: [Note] = []
+        if shot.reference != nil, !layout.lines.fits, !camera.isCinemaCameraFeed {
+            let wider = Int(((max(layout.lines.widthFraction, layout.lines.heightFraction) - 1) * 100).rounded())
+            out.append(Note(short: "Wider than the phone", full: "Wider than this phone's widest lens can see (\(wider)% more): the frame shows the phone's widest view.", warning: true))
+        }
+        if let d = dof, d.tooClose {
+            out.append(Note(short: "Too close to focus", full: String(format: "Closer than this lens can focus (%.2f m).", shot.lens.minimumFocusDistance), warning: true))
+        }
+        if let m = matchSettings, abs(m.stopsOff) > 0.5 {
+            let text = m.stopsOff > 0 ? String(format: "%.1f stops dark", m.stopsOff) : String(format: "%.1f stops bright", -m.stopsOff)
+            out.append(Note(short: text, full: "Phone picture \(text)er than the real exposure (the phone's limit).", warning: false))
+        }
+        return out
+    }
+
+    private func statusColumn(_ layout: ViewfinderLayout) -> some View {
+        let list = notes(layout)
+        let effective = Optics.fov(fromHalfTan: Optics.halfTan(camera.baseLongSideFov) / max(camera.zoom, 0.1))
+        let base = "\(camera.currentLensName) · \(Int(effective.rounded()))° · \(camera.fovSource.short)"
+        let warn = list.contains { $0.warning }
+        return VStack(spacing: 6) {
+            if camera.status == .running || !list.isEmpty {
+                VStack(spacing: 4) {
+                    Group {
+                        if let first = list.first {
+                            Text((first.warning ? "⚠ " : "") + first.short + (list.count > 1 ? "  +\(list.count - 1)" : ""))
+                        } else { Text(base) }
+                    }
+                    .font(.caption.weight(.semibold)).lineLimit(1)
+                    if chipOpen {
+                        ForEach(list) { n in Text(n.full).font(.caption) }
+                        Text("\(base)\n\(camera.fovSource.label)").font(.caption2).foregroundStyle(Color(red: 0.79, green: 0.85, blue: 1))
+                            .multilineTextAlignment(.center)
                     }
                 }
-            } label: { Image(systemName: "aspectratio").hudChip() }
-                .disabled(locked)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(warn ? Color(red: 0.54, green: 0.23, blue: 0).opacity(0.85) : Color.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
+                .onTapGesture { chipOpen.toggle() }
+            }
+            if let message { Text(message).hudChip().transition(.opacity) }
+            if let mode = markerMode { Label("Tap inside the frame: \(mode.label)", systemImage: mode.symbol).hudChip(true) }
+        }
+        .frame(maxWidth: 340)
+    }
 
-            Menu {
-                Button("Stop placing markers") { markerMode = nil }
-                ForEach(MarkerType.allCases) { t in
-                    Button { markerMode = t } label: { Label(t.label, systemImage: t.symbol) }
-                }
-                if !shot.markers.isEmpty {
-                    Divider()
-                    Button("Remove all markers", role: .destructive) { removeMarkers() }
-                }
-            } label: { Image(systemName: "mappin.and.ellipse").hudChip(markerMode != nil) }
+    // MARK: exposure / focus lines
 
-            Spacer()
+    private var exposureLine: some View {
+        let parts = [Exposure.stop(shot.aperture).map { ShotPresets.tStopText($0) }, "ISO \(shot.iso)", "\(shot.fps)p", shot.shutter]
+            .compactMap { $0 }.joined(separator: " · ")
+        var text = Text(parts)
+        if let t = motion.tilt {
+            let level = abs(t.roll) < 1
+            text = text + Text(" · ") + Text(level ? "Level ✓" : "Level \(Int(t.roll.rounded()))°").foregroundColor(level ? .green : .white)
+                + Text(" · Pitch \(Int(t.pitch.rounded()))°")
+        }
+        return Button { showExposure = true } label: {
+            text.font(.system(size: 13, design: .monospaced)).lineLimit(1).truncationMode(.tail)
+                .foregroundStyle(.white).padding(.horizontal, 12).padding(.vertical, 6).background(Color.black.opacity(0.4), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
 
-            Button { Task { await capture() } } label: {
-                Circle().strokeBorder(.white, lineWidth: 4).frame(width: 62, height: 62)
-                    .overlay(Circle().fill(Theme.accent).padding(8))
+    private var dof: Focus.Result? {
+        guard let d = shot.estimatedDistance else { return nil }
+        let stop = Exposure.stop(shot.aperture) ?? (shot.lens.maximumAperture > 0 ? shot.lens.maximumAperture : 0)
+        return Focus.depthOfField(focalMm: shot.focalMm, stop: stop, distanceM: d, cocMm: Focus.circleOfConfusionMm(shot.sensorMode),
+                                  closeFocusM: shot.lens.minimumFocusDistance)
+    }
+
+    @ViewBuilder private var focusLine: some View {
+        if let d = shot.estimatedDistance {
+            Button { showExposure = true } label: {
+                Text((["Focus \(Focus.distanceText(d))", dof.map(Focus.dofText)].compactMap { $0 }).joined(separator: " · "))
+                    .font(.system(size: 11, design: .monospaced)).lineLimit(1)
+                    .foregroundStyle(dof?.tooClose == true ? Color.orange : Color(red: 0.79, green: 0.85, blue: 1))
             }
             .buttonStyle(.plain)
-            .disabled(camera.status != .running)
-            .accessibilityLabel("Capture reference photo")
-
-            Spacer()
-
-            Button { locked.toggle() } label: { Image(systemName: locked ? "lock.fill" : "lock.open").hudChip(locked) }
-                .buttonStyle(.plain)
-            Button { showSettings = true } label: { Image(systemName: "gearshape").hudChip() }
-                .buttonStyle(.plain)
         }
+    }
+
+    // MARK: buttons
+
+    private var focalChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(focals, id: \.self) { f in
+                    Button { setFocal(f) } label: {
+                        Text(f.rounded() == f ? "\(Int(f))" : String(format: "%.1f", f)).font(.callout.monospacedDigit().weight(.semibold))
+                            .frame(minWidth: 40).padding(.vertical, 8).padding(.horizontal, 6)
+                            .background(abs(shot.focalMm - f) < 0.5 ? Color.blue : Color.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 9))
+                            .foregroundStyle(abs(shot.focalMm - f) < 0.5 ? Color.white : Color.black)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(locked)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var shotSizeButtons: some View {
+        if showShotSizes {
+            ForEach(ShotSize.allCases, id: \.self) { size in
+                let target = FocalOptions.focal(for: size, focals: focals, mode: shot.sensorMode, squeeze: shot.lens.anamorphicSqueeze)
+                let active = target.map { abs($0 - shot.focalMm) < 0.5 } ?? false
+                Button {
+                    if let f = target, !locked { setFocal(f); shot.shotType = size.shotType; shot.touch() }
+                } label: {
+                    Text(String(size.label.prefix(1))).font(.caption.bold()).frame(width: 32, height: 32)
+                        .background(active ? Color.blue : Color.white.opacity(0.85), in: Circle())
+                        .foregroundStyle(active ? Color.white : Color.black)
+                }
+                .buttonStyle(.plain)
+                .opacity(0.72)
+            }
+        }
+    }
+
+    @ViewBuilder private var toolButtons: some View {
+        roundButton("Grid", on: showThirds) { showThirds.toggle() }
+        roundButton("Level", on: showLevel) { showLevel.toggle() }
+        roundButton("Expo", on: exposureMode == .match) { showExposure = true }
+        roundButton("Setup", on: false) { showSettings = true }
+    }
+
+    private func roundButton(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 10, weight: .bold)).frame(width: 42, height: 42)
+                .background(on ? Color.blue : Color.white.opacity(0.9), in: Circle())
+                .foregroundStyle(on ? Color.white : Color.black)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var markerMenu: some View {
+        Menu {
+            Button("Stop placing markers") { markerMode = nil }
+            ForEach(MarkerType.allCases) { t in
+                Button { markerMode = t } label: { Label(t.label, systemImage: t.symbol) }
+            }
+            if !shot.markers.isEmpty {
+                Divider()
+                Button("Remove all markers", role: .destructive) { removeMarkers() }
+            }
+        } label: { Image(systemName: "mappin.and.ellipse").hudChip(markerMode != nil) }
+    }
+
+    private var captureButton: some View {
+        Button { Task { await capture() } } label: {
+            Circle().strokeBorder(.white, lineWidth: 4).frame(width: 66, height: 66)
+                .overlay(Circle().fill(.white).padding(7))
+        }
+        .buttonStyle(.plain)
+        .disabled(camera.status != .running)
+        .accessibilityLabel("Capture reference photo")
+    }
+
+    private var lockButton: some View {
+        Button { locked.toggle() } label: { Image(systemName: locked ? "lock.fill" : "lock.open").hudChip(locked) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(locked ? "Unlock zoom" : "Lock zoom")
     }
 
     @ViewBuilder private var statusOverlay: some View {
@@ -203,6 +437,157 @@ struct ViewfinderView: View {
         }
     }
 
+    // MARK: extra overlays: level, distortion, compare
+
+    private func extraOverlays(_ layout: ViewfinderLayout) -> some View {
+        let frame = layout.cgFrame
+        let tilt = motion.tilt
+        let distortion = distortionPoints(layout)
+        let others = compare ? compareFrames(layout) : []
+        return Canvas { ctx, _ in
+            guard frame.width > 1 else { return }
+            if showLevel, let t = tilt {
+                let c = CGPoint(x: frame.midX, y: frame.midY), half = frame.width * 0.3
+                let level = abs(t.roll) < 1
+                let a = CGFloat(-t.roll * .pi / 180)
+                var p = Path()
+                p.move(to: CGPoint(x: c.x - half * cos(a), y: c.y - half * sin(a)))
+                p.addLine(to: CGPoint(x: c.x + half * cos(a), y: c.y + half * sin(a)))
+                ctx.stroke(p, with: .color(level ? .green : .white), lineWidth: 2)
+                var ticks = Path()
+                ticks.move(to: CGPoint(x: c.x - half - 18, y: c.y)); ticks.addLine(to: CGPoint(x: c.x - half - 6, y: c.y))
+                ticks.move(to: CGPoint(x: c.x + half + 6, y: c.y)); ticks.addLine(to: CGPoint(x: c.x + half + 18, y: c.y))
+                ctx.stroke(ticks, with: .color(.white.opacity(0.7)), lineWidth: 2)
+            }
+            if distortion.count > 2 {
+                var p = Path()
+                p.move(to: distortion[0]); for q in distortion.dropFirst() { p.addLine(to: q) }; p.closeSubpath()
+                ctx.stroke(p, with: .color(.orange), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+            }
+            for (f, r) in others {
+                let colour = Color(red: 1, green: 0.88, blue: 0.54)
+                ctx.stroke(Path(r), with: .color(colour.opacity(0.85)), style: StrokeStyle(lineWidth: 1.2, dash: [10, 6]))
+                ctx.draw(Text(ShotPresets.focalText(f)).font(.caption2.monospaced().bold()).foregroundColor(colour),
+                         at: CGPoint(x: r.minX + 4, y: r.minY + 2), anchor: .topLeading)
+            }
+        }
+    }
+
+    /// Where the frame edges really fall for a lens with a distortion profile (screen points).
+    private func distortionPoints(_ layout: ViewfinderLayout) -> [CGPoint] {
+        guard showDistortion, layout.lines.fits, let ref = shot.reference,
+              let model = Distortion.model(for: shot.lens, focalMm: shot.focalMm),
+              Distortion.withinCalibration(shot.lens, widthMm: ref.deliveredWidthMm, heightMm: ref.deliveredHeightMm),
+              ref.tanHalfH > 0, ref.tanHalfV > 0 else { return [] }
+        let f = layout.frame
+        return Distortion.frameOutline(model, widthMm: ref.deliveredWidthMm, heightMm: ref.deliveredHeightMm, focalMm: ref.effectiveFocalLengthMm)
+            .map { CGPoint(x: f.midX + $0.0 / ref.tanHalfH * f.width / 2, y: f.midY + $0.1 / ref.tanHalfV * f.height / 2) }
+    }
+
+    private func compareFocals() -> [Double] {
+        let others = focals.filter { abs($0 - shot.focalMm) >= 0.5 }
+        if others.count <= 6 { return others }
+        return Array(Set((0..<6).map { others[$0 * (others.count - 1) / 5] })).sorted()
+    }
+
+    private func compareFrames(_ layout: ViewfinderLayout) -> [(Double, CGRect)] {
+        let zoomed = Monitor.viewAcross(layout.view, video: layout.video, area: layout.area).zoomed(layout.zoom)
+        return compareFocals().compactMap { f in
+            let lens = FocalOptions.lens(for: shot.lens, focal: f)
+            guard let ref = Framing.reference(camera: shot.camera, lens: lens, focalLengthMm: f, aspectRatio: shot.aspectValue) else { return nil }
+            let lines = Viewfinder.frameLines(ref, on: zoomed)
+            guard lines.fits else { return nil }
+            let r = Viewfinder.frameRect(lines, in: layout.area)
+            return (f, CGRect(x: r.x, y: r.y, width: r.width, height: r.height))
+        }
+    }
+
+    private var frameLabel: String {
+        [shot.focalLength.isEmpty ? nil : shot.focalLength, shot.aspectRatio, shot.reference.map { "\(Int($0.deliveredFov.horizontal.rounded()))°" }]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    // MARK: - exposure
+
+    /// Changes whenever anything that affects the phone's exposure changes.
+    private var exposureKey: String { [shot.iso, shot.shutter, shot.fps, shot.nd, shot.aperture, exposureModeRaw].joined(separator: "|") }
+
+    private var matchSettings: ExposureMatch.Phone? {
+        guard exposureMode == .match, camera.customExposureSupported,
+              let k = ExposureMatch.target(iso: shot.iso, shutter: shot.shutter, fps: shot.fps, nd: shot.nd, aperture: shot.aperture,
+                                           phoneAperture: camera.lensAperture) else { return nil }
+        return ExposureMatch.phone(isoTimesSeconds: k, isoMin: camera.isoRange.lowerBound, isoMax: camera.isoRange.upperBound,
+                                   minSeconds: camera.durationRange.lowerBound, maxSeconds: camera.durationRange.upperBound,
+                                   preferredSeconds: ExposureMatch.exposureSeconds(shutter: shot.shutter, fps: shot.fps))
+    }
+
+    private func applyExposure() {
+        guard camera.status == .running, !camera.isCinemaCameraFeed else { return }
+        if let m = matchSettings { camera.setManualExposure(iso: m.iso, seconds: m.seconds); return }
+        let ev = Exposure.ev(iso: shot.iso, shutter: shot.shutter, nd: shot.nd, aperture: shot.aperture)
+        camera.setAutoExposure(bias: exposureMode == .auto ? 0 : ev)
+    }
+
+    private func binding(_ key: ReferenceWritableKeyPath<RecceShot, String>) -> Binding<String> {
+        Binding(get: { shot[keyPath: key] }, set: { shot[keyPath: key] = $0; shot.touch() })
+    }
+
+    private var exposureSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Cinema camera") {
+                    Picker("Frame rate", selection: binding(\.fps)) { ForEach(withCurrent(ShotPresets.frameRates, shot.fps), id: \.self) { Text($0).tag($0) } }
+                    Picker("Shutter", selection: binding(\.shutter)) { ForEach(withCurrent(ShotPresets.shutterAngles, shot.shutter), id: \.self) { Text($0).tag($0) } }
+                    Picker("ISO", selection: binding(\.iso)) { ForEach(withCurrent(ShotPresets.isos, shot.iso), id: \.self) { Text($0).tag($0) } }
+                    Picker("ND", selection: binding(\.nd)) { ForEach(withCurrent(ShotPresets.ndFilters, shot.nd), id: \.self) { Text($0).tag($0) } }
+                    Picker("Iris", selection: binding(\.aperture)) {
+                        Text("Not set").tag("")
+                        ForEach(irisOptions, id: \.self) { Text($0).tag($0) }
+                    }
+                    Picker("Focus distance", selection: Binding(get: { shot.estimatedDistance ?? 0 }, set: { shot.estimatedDistance = $0 > 0 ? $0 : nil; shot.touch() })) {
+                        Text("Not set").tag(0.0)
+                        ForEach(withCurrent(Focus.presetsM, shot.estimatedDistance ?? 0).filter { $0 > 0 }, id: \.self) { Text(Focus.distanceText($0)).tag($0) }
+                    }
+                    if let d = dof {
+                        Text(Focus.dofText(d) + " · hyperfocal " + Focus.distanceText(d.hyperfocalM)).font(.caption.monospaced())
+                            .foregroundStyle(d.tooClose ? Color.orange : Color.secondary)
+                    }
+                }
+                #if os(iOS)
+                Section {
+                    Picker("Phone picture", selection: $exposureModeRaw) {
+                        ForEach(PhoneExposureMode.allCases) { Text($0.label).tag($0.rawValue) }
+                    }
+                    .pickerStyle(.segmented)
+                } header: { Text("Phone picture exposure") } footer: {
+                    if exposureMode == .match && !camera.customExposureSupported {
+                        Text(exposureMode.detail + " This camera doesn't allow manual exposure, so it follows instead.")
+                    } else if let m = matchSettings {
+                        Text(exposureMode.detail + String(format: "\nPhone set to ISO %.0f · 1/%.0f s.", m.iso, 1 / max(m.seconds, 1e-6)))
+                    } else if exposureMode == .match {
+                        Text(exposureMode.detail + " Needs ISO, shutter, frame rate and iris set.")
+                    } else { Text(exposureMode.detail) }
+                }
+                #endif
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Exposure")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showExposure = false } } }
+        }
+        .presentationDetents([.medium, .large])
+        #if os(macOS)
+        .frame(minWidth: 420, minHeight: 480)
+        #endif
+    }
+
+    /// T-stops this lens can reach, plus the shot's own value (older shots store "f/2.8").
+    private var irisOptions: [String] {
+        let list = tStops.filter { !shot.lens.hasAperture || $0 >= shot.lens.maximumAperture - 0.001 }.map { ShotPresets.tStopText($0) }
+        return shot.aperture.isEmpty ? list : withCurrent(list, shot.aperture)
+    }
+
+    private func withCurrent<T: Hashable>(_ list: [T], _ current: T) -> [T] { list.contains(current) ? list : [current] + list }
+
     // MARK: settings
 
     private var settingsSheet: some View {
@@ -211,8 +596,12 @@ struct ViewfinderView: View {
                 Section("Guides") {
                     Toggle("Rule of thirds", isOn: $showThirds)
                     Toggle("Centre cross", isOn: $showCenter)
-                    Toggle("Horizon line", isOn: $showHorizon)
+                    Toggle("Level", isOn: $showLevel)
                     Toggle("Safe areas (90% / 80%)", isOn: $showSafe)
+                    Toggle("Show outside the frame", isOn: $surroundings)
+                    Toggle("Compare focal lengths", isOn: $compare)
+                    if Distortion.hasProfile(shot.lens) { Toggle("Lens distortion", isOn: $showDistortion) }
+                    Toggle("W / M / C buttons", isOn: $showShotSizes)
                 }
                 #if os(iOS)
                 Section {
@@ -222,7 +611,7 @@ struct ViewfinderView: View {
                                in: camera.minZoom...max(camera.maxZoom, camera.minZoom + 0.01)) { Text("Zoom") }
                     }
                 } header: { Text("Phone camera") } footer: {
-                    Text("Field of view \(camera.baseLongSideFov.degreesText) at zoom 1, measured by the phone. Frame lines follow the zoom actually applied.")
+                    Text("\(camera.currentLensName) lens in use (\(String(format: "%.1f", camera.displayZoom))×). Field of view \(camera.baseLongSideFov.degreesText) at the widest zoom: \(camera.fovSource.label.lowercased()). The phone switches to its ultra-wide by itself when the frame needs it.")
                 }
                 #else
                 Section {
@@ -247,23 +636,19 @@ struct ViewfinderView: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showSettings = false } } }
         }
         #if os(macOS)
-        .frame(minWidth: 420, minHeight: 380)
+        .frame(minWidth: 420, minHeight: 420)
         #endif
     }
 
     // MARK: actions
 
+    /// Sets the focal length; for a prime set this switches to the set's lens at that focal length.
     private func setFocal(_ f: Double) {
-        guard !locked else { return }
-        shot.focalLength = ShotPresets.focalText(shot.lens.clampFocal(f))
+        guard !locked else { show("Zoom is locked"); return }
+        let target = FocalOptions.lens(for: shot.lens, focal: f)
+        if target.id != shot.lens.id { shot.apply(lens: target) }
+        shot.focalLength = ShotPresets.focalText(target.isZoom ? target.clampFocal(f) : target.focalLengthMin)
         shot.touch()
-    }
-
-    private func applyAutoZoom() {
-        guard autoZoom, !camera.isCinemaCameraFeed, camera.maxZoom > camera.minZoom, let ref = shot.reference else { return }
-        let base = RecceKit.PreviewView.fromFormat(longSideFov: camera.baseLongSideFov, longOverShort: camera.formatAspect,
-                                                   portrait: camera.isPortrait)
-        camera.setZoom(Viewfinder.bestZoom(for: ref, base: base, minZoom: camera.minZoom, maxZoom: camera.maxZoom))
     }
 
     private func addMarker(at point: CGPoint, layout: ViewfinderLayout) {
@@ -292,10 +677,8 @@ struct ViewfinderView: View {
             let ref = ShotReference(fileName: name)
             let l = lastLayout
             if l.video.width > 0, l.video.height > 0 {
-                ref.frameX = (l.frame.x - l.video.x) / l.video.width
-                ref.frameY = (l.frame.y - l.video.y) / l.video.height
-                ref.frameWidth = l.frame.width / l.video.width
-                ref.frameHeight = l.frame.height / l.video.height
+                let r = Monitor.frameInPicture(l.frame, video: l.video)
+                ref.frameX = r.x; ref.frameY = r.y; ref.frameWidth = r.width; ref.frameHeight = r.height
             }
             context.insert(ref)
             ref.shot = shot
@@ -304,7 +687,7 @@ struct ViewfinderView: View {
             withAnimation(.easeOut(duration: 0.15)) { flash = true }
             try? await Task.sleep(nanoseconds: 150_000_000)
             withAnimation { flash = false }
-            show("Reference photo saved to shot \(shot.shotNumber)")
+            show("Frame saved to shot \(shot.shotNumber)")
         } catch {
             show(error.localizedDescription)
         }
@@ -319,14 +702,17 @@ struct ViewfinderView: View {
     }
 }
 
-/// Frame lines, aspect mask, guides and markers.
+/// Frame mask, frame line, corners, label, guides and markers.
 struct FrameOverlay: View {
     let layout: ViewfinderLayout
     let locked: Bool
     let showThirds: Bool
     let showCenter: Bool
-    let showHorizon: Bool
     let showSafe: Bool
+    let maskOpacity: Double
+    let label: String
+    /// The phone's angle is assumed (not reported): the frame line is dashed to show it is approximate.
+    let approximate: Bool
     let markers: [ShotMarker]
 
     var body: some View {
@@ -334,11 +720,11 @@ struct FrameOverlay: View {
             Canvas { ctx, size in
                 let frame = layout.cgFrame
                 guard frame.width > 1, frame.height > 1 else { return }
-                // Darken everything outside the cinema frame.
+                // See-through mask outside the cinema frame (the live picture stays visible).
                 var mask = Path(CGRect(origin: .zero, size: size))
                 mask.addRect(frame)
-                ctx.fill(mask, with: .color(.black.opacity(0.55)), style: FillStyle(eoFill: true))
-                let line = Color.white.opacity(0.55)
+                ctx.fill(mask, with: .color(.black.opacity(maskOpacity)), style: FillStyle(eoFill: true))
+                let guide = Color.white.opacity(0.45)
                 if showThirds {
                     var p = Path()
                     for i in 1...2 {
@@ -347,7 +733,7 @@ struct FrameOverlay: View {
                         p.move(to: CGPoint(x: x, y: frame.minY)); p.addLine(to: CGPoint(x: x, y: frame.maxY))
                         p.move(to: CGPoint(x: frame.minX, y: y)); p.addLine(to: CGPoint(x: frame.maxX, y: y))
                     }
-                    ctx.stroke(p, with: .color(line), lineWidth: 0.8)
+                    ctx.stroke(p, with: .color(guide), lineWidth: 0.8)
                 }
                 if showCenter {
                     let c = CGPoint(x: frame.midX, y: frame.midY), s: CGFloat = 12
@@ -356,19 +742,45 @@ struct FrameOverlay: View {
                     p.move(to: CGPoint(x: c.x, y: c.y - s)); p.addLine(to: CGPoint(x: c.x, y: c.y + s))
                     ctx.stroke(p, with: .color(.white.opacity(0.9)), lineWidth: 1.5)
                 }
-                if showHorizon {
-                    var p = Path()
-                    p.move(to: CGPoint(x: frame.minX, y: frame.midY)); p.addLine(to: CGPoint(x: frame.maxX, y: frame.midY))
-                    ctx.stroke(p, with: .color(.yellow.opacity(0.8)), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
-                }
                 if showSafe {
                     for f in [0.9, 0.8] {
                         let r = Viewfinder.safeArea(layout.frame, fraction: f)
                         ctx.stroke(Path(CGRect(x: r.x, y: r.y, width: r.width, height: r.height)),
-                                   with: .color(.white.opacity(0.45)), style: StrokeStyle(lineWidth: 0.8, dash: [4, 4]))
+                                   with: .color(guide), style: StrokeStyle(lineWidth: 0.8, dash: [4, 4]))
                     }
                 }
-                ctx.stroke(Path(frame), with: .color(locked ? Theme.locked : Theme.frameLine), lineWidth: 2)
+                // Frame line with a dark edge (visible on bright scenes); orange when wider than the phone sees.
+                let clipped = !layout.lines.fits
+                let colour: Color = locked ? Theme.locked : (clipped ? .orange : Theme.frameLine)
+                ctx.stroke(Path(frame), with: .color(.black.opacity(0.55)), lineWidth: 3.5)
+                ctx.stroke(Path(frame), with: .color(colour), style: StrokeStyle(lineWidth: 1.5, dash: approximate ? [14, 8] : []))
+                // The true frame edges continue off screen when wider than the phone sees.
+                if let t = layout.trueFrame {
+                    ctx.stroke(Path(CGRect(x: t.x, y: t.y, width: t.width, height: t.height)), with: .color(.orange.opacity(0.8)),
+                               style: StrokeStyle(lineWidth: 1.5, dash: [10, 10]))
+                    let wider = Int(((max(layout.lines.widthFraction, layout.lines.heightFraction) - 1) * 100).rounded())
+                    if wider > 0 {
+                        ctx.draw(Text("Frame \(wider)% wider than the phone sees").font(.caption2.weight(.semibold)).foregroundColor(.orange),
+                                 at: CGPoint(x: frame.minX + 6, y: frame.maxY - 6), anchor: .bottomLeading)
+                    }
+                }
+                // Corner marks on the true corners, outlined.
+                let b: CGFloat = 18
+                for (col, width) in [(Color.black.opacity(0.6), CGFloat(5)), (Color.white, CGFloat(3))] {
+                    var p = Path()
+                    let corners: [(CGPoint, CGFloat, CGFloat)] = [
+                        (CGPoint(x: frame.minX, y: frame.minY), 1, 1), (CGPoint(x: frame.maxX, y: frame.minY), -1, 1),
+                        (CGPoint(x: frame.minX, y: frame.maxY), 1, -1), (CGPoint(x: frame.maxX, y: frame.maxY), -1, -1)]
+                    for (pt, dx, dy) in corners {
+                        p.move(to: CGPoint(x: pt.x - dx * width / 2, y: pt.y)); p.addLine(to: CGPoint(x: pt.x + dx * b, y: pt.y))
+                        p.move(to: CGPoint(x: pt.x, y: pt.y - dy * width / 2)); p.addLine(to: CGPoint(x: pt.x, y: pt.y + dy * b))
+                    }
+                    ctx.stroke(p, with: .color(col), lineWidth: width)
+                }
+                if !label.isEmpty {
+                    ctx.draw(Text(label).font(.caption2.monospaced()).foregroundColor(.white.opacity(0.9)),
+                             at: CGPoint(x: frame.minX + 8, y: frame.minY + 6), anchor: .topLeading)
+                }
             }
             ForEach(markers) { m in
                 Image(systemName: m.markerType.symbol)
