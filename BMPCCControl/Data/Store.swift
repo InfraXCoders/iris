@@ -66,6 +66,7 @@ enum RecceExport {
                             },
                             creationTimestamp: RecceJSON.millis(shot.created),
                             modificationTimestamp: RecceJSON.millis(shot.modified),
+                            plannedTime: shot.plannedTime.map(RecceJSON.millis),
                             lut: shot.lut)
                     })
             },
@@ -73,7 +74,8 @@ enum RecceExport {
             voiceNotes: s.sortedNotes.map {
                 RecceNoteDoc(id: $0.id, sessionId: s.id, shotId: $0.shotId, rawTranscription: $0.text,
                              detectedLanguage: $0.language, timestamp: RecceJSON.millis($0.date))
-            })
+            },
+            skyline: s.skyline.isEmpty ? nil : s.skyline)
     }
 
     /// Writes the session as JSON to a temporary file for sharing.
@@ -103,6 +105,7 @@ enum RecceExport {
                                    date: RecceJSON.date(doc.timestamp), latitude: doc.latitude, longitude: doc.longitude,
                                    directorDopNotes: doc.directorDopNotes, generalLocationNotes: doc.generalLocationNotes,
                                    created: RecceJSON.date(doc.creationTimestamp), modified: RecceJSON.date(doc.modificationTimestamp))
+        session.skyline = doc.skyline ?? []
         context.insert(session)
         for sd in doc.scenes {
             let scene = RecceScene(id: sd.id, sceneNumber: sd.sceneNumber, isInterior: sd.isInterior, isDay: sd.isDay,
@@ -134,6 +137,7 @@ enum RecceExport {
                 shot.estimatedDistance = d.estimatedDistance
                 shot.notes = d.notes
                 shot.lut = d.lut
+                shot.plannedTime = d.plannedTime.map(RecceJSON.date)
                 shot.modified = RecceJSON.date(d.modificationTimestamp)
                 context.insert(shot)
                 shot.scene = scene

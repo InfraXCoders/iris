@@ -45,6 +45,7 @@ struct RootView: View {
                     NavigationLink { LibraryView(tab: .lenses) } label: { Label("Lens database", systemImage: "camera.aperture") }
                     NavigationLink { LibraryView(tab: .cameras) } label: { Label("Camera database", systemImage: "video") }
                     NavigationLink { CoverageView() } label: { Label("Lens coverage tool", systemImage: "circle.rectangle.dashed") }
+                    NavigationLink { SunPlannerView() } label: { Label("Sun planner", systemImage: "sun.max") }
                     Button { importing = true } label: { Label("Import recce (JSON)", systemImage: "square.and.arrow.down") }
                     Label { VStack(alignment: .leading) {
                         Text("Camera control")

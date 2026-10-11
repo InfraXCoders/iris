@@ -15,6 +15,8 @@ final class RecceSession {
     var longitude: Double?
     var directorDopNotes: String
     var generalLocationNotes: String
+    /// Recorded skyline (buildings, trees, hills) as JSON [SkyPoint], for when they block the sun (same as Android).
+    var skylineData: Data?
     var created: Date
     var modified: Date
     @Relationship(deleteRule: .cascade, inverse: \RecceScene.session) var scenes: [RecceScene] = []
@@ -39,6 +41,11 @@ final class RecceSession {
     var sortedNotes: [RecceNote] { notes.sorted { $0.date < $1.date } }
     var shotCount: Int { scenes.reduce(0) { $0 + $1.shots.count } }
     var hasLocation: Bool { latitude != nil && longitude != nil }
+
+    var skyline: [SkyPoint] {
+        get { skylineData.flatMap { try? JSONDecoder().decode([SkyPoint].self, from: $0) } ?? [] }
+        set { skylineData = newValue.isEmpty ? nil : try? JSONEncoder().encode(newValue) }
+    }
 
     /// "2" before "10", "4A" after "4"; ties broken by creation time.
     static func natural(_ a: String, _ b: String, _ ca: Date, _ cb: Date) -> Bool {
@@ -116,6 +123,8 @@ final class RecceShot {
     var subjectMovement: String
     var estimatedDistance: Double?
     var notes: String
+    /// Time chosen in the sun planner for this shot.
+    var plannedTime: Date?
     /// Look (LUT) for this shot: "builtin:<name>" or "file:<file name>" (same as Android).
     var lut: String?
     var created: Date

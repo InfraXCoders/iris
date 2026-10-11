@@ -7,6 +7,8 @@ struct SunCard: View {
     let latitude: Double
     let longitude: Double
     let date: Date
+    /// The recorded skyline: adds when the sun is really out (not behind buildings or hills).
+    var skyline: Skyline? = nil
 
     var body: some View {
         let day = Solar.day(for: date, latitude: latitude, longitude: longitude, timeZone: .current)
@@ -18,6 +20,11 @@ struct SunCard: View {
             } else {
                 row("sunrise.fill", "Sunrise", Self.time(day.sunrise))
                 row("sunset.fill", "Sunset", Self.time(day.sunset))
+            }
+            if let skyline {
+                let periods = SunPlan.directSunPeriods(date, latitude: latitude, longitude: longitude, timeZone: .current, skyline: skyline)
+                row("building.2", "Direct sun (skyline)",
+                    periods.isEmpty ? "none" : periods.map { "\(Self.time($0.0)) – \(Self.time($0.1))" }.joined(separator: "\n"))
             }
             row("sun.max", "Solar noon", "\(Self.time(day.solarNoon)) · \(day.noonElevation.degreesText) high")
             row("sun.haze.fill", "Golden hour (morning)", Self.range(day.goldenMorning))

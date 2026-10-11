@@ -31,8 +31,15 @@ struct SessionDetailView: View {
             }
 
             Section("Sun") {
+                NavigationLink { SunPlannerView(session: session) } label: {
+                    Label { VStack(alignment: .leading) {
+                        Text("Sun planner")
+                        Text("Time slider, sun path, sun in the camera (AR), when the sun reaches a spot").font(.caption).foregroundStyle(.secondary)
+                    } } icon: { Image(systemName: "sun.max.fill").foregroundStyle(SunText.gold) }
+                }
                 if let lat = session.latitude, let lon = session.longitude {
-                    SunCard(latitude: lat, longitude: lon, date: session.date)
+                    SunCard(latitude: lat, longitude: lon, date: session.date,
+                            skyline: session.skyline.isEmpty ? nil : Skyline(session.skyline))
                 } else {
                     Text("Save a location to see sunrise, sunset, golden hour and blue hour.").foregroundStyle(.secondary)
                 }

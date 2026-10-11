@@ -65,6 +65,14 @@ struct ShotDetailView: View {
 
             FramingSection(shot: shot)
 
+            Section("Sun") {
+                NavigationLink { SunPlannerView(session: shot.scene?.session, shot: shot) } label: {
+                    LabeledContent {
+                        Text(shot.plannedTime.map { "\($0.formatted(date: .abbreviated, time: .omitted)), \(SunText.clock($0))" } ?? "Not planned")
+                    } label: { Label("Sun planner", systemImage: "sun.max.fill") }
+                }
+            }
+
             Section("Reference photos") {
                 let refs = shot.references.sorted { $0.date < $1.date }
                 if refs.isEmpty {
