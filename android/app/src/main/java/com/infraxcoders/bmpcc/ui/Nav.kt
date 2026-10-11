@@ -37,7 +37,8 @@ sealed interface Dest {
     /** "New recce" sheet over the camera picture; opens the viewfinder. */
     data object RecceStart : Dest
     /** Measure the phone camera's real angle of view. */
-    data object Calibrate : Dest
+    /** Manual angle-of-view calibration, for one phone lens ([lensKey]; null = the main lens). */
+    data class Calibrate(val lensKey: String? = null) : Dest
     /** All saved frames of a scene side by side. */
     data class Compare(val sessionId: String, val sceneId: String) : Dest
     /** Sun planner for a recce / shot (or anywhere). The time and location are shared with the AR view. */
@@ -54,6 +55,8 @@ sealed interface Dest {
     data object Luts : Dest
     /** All recces with a location on a map (optionally centred on one). */
     data class RecceMap(val focusSessionId: String? = null) : Dest
+    /** What this phone's cameras and sensors offer the app. */
+    data object PhoneInfo : Dest
     data class LensInfo(val lensId: String) : Dest
     data class CameraInfo(val cameraId: String) : Dest
     class Coverage(cameraId: String? = null, lensId: String? = null, modeId: String? = null) : Dest {
@@ -110,11 +113,12 @@ private fun Content(nav: Navigator, d: Dest) {
         Dest.Connect -> ConnectScreen(nav)
         Dest.Shoot -> ShootScreen(nav)
         Dest.RecceStart -> RecceStartScreen(nav)
-        Dest.Calibrate -> CalibrateScreen(nav)
+        is Dest.Calibrate -> CalibrateScreen(nav, d.lensKey)
         is Dest.Compare -> CompareScreen(nav, d.sessionId, d.sceneId)
         is Dest.Sun -> SunPlannerScreen(nav, d)
         is Dest.SunAr -> SunArScreen(nav, d.planner)
         Dest.Luts -> LutLibraryScreen(nav)
         is Dest.RecceMap -> RecceMapScreen(nav, d.focusSessionId)
+        Dest.PhoneInfo -> PhoneInfoScreen(nav)
     }
 }

@@ -147,12 +147,13 @@ fun HomeScreen(nav: Navigator) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ToolLink("My recces · ${sessions.size}") { nav.push(Dest.Recces) }
             ToolLink("Recce map") { nav.push(Dest.RecceMap()) }
+            ToolLink("Phone info") { nav.push(Dest.PhoneInfo) }
             ToolLink("Lenses · ${Catalog.lenses.size}") { nav.push(Dest.Library(LibraryTab.LENSES)) }
             ToolLink("Cameras · ${Catalog.cameras.size}") { nav.push(Dest.Library(LibraryTab.CAMERAS)) }
             ToolLink("Lens coverage") { nav.push(Dest.Coverage()) }
             ToolLink("Sun planner") { nav.push(Dest.Sun()) }
             ToolLink("LUTs · ${LutStore.entries.size}") { nav.push(Dest.Luts) }
-            ToolLink(if (Settings.fovCalibration != null) "Phone calibrated ✓" else "Calibrate phone") { nav.push(Dest.Calibrate) }
+            ToolLink(if (Settings.fovCalibration != null) "Phone calibrated ✓" else "Calibrate phone") { nav.push(Dest.Calibrate()) }
         }
         Spacer(Modifier.height(28.dp))
         // Which copy of the app this is (same as the APK name: BMPCC-Control-v<version>-b<build>.apk).

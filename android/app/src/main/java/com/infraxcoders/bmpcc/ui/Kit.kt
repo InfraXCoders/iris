@@ -66,16 +66,16 @@ fun RoundButton(
 @Composable
 fun Pill(
     text: String, modifier: Modifier = Modifier, mono: Boolean = false, color: Color = Brand.light,
-    textColor: Color = Brand.ink, leading: (@Composable () -> Unit)? = null, onClick: (() -> Unit)? = null,
+    textColor: Color = Brand.ink, leading: (@Composable () -> Unit)? = null, maxLines: Int = 1, onClick: (() -> Unit)? = null,
 ) {
     Row(
-        modifier.background(color, RoundedCornerShape(50))
+        modifier.background(color, RoundedCornerShape(if (maxLines > 1) 16.dp else 50.dp))
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         leading?.invoke()
-        Text(text, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+        Text(text, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = maxLines,
             fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default)
     }
 }

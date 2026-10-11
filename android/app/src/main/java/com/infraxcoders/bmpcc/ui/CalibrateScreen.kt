@@ -2,7 +2,6 @@ package com.infraxcoders.bmpcc.ui
 
 import android.Manifest
 import android.content.pm.ActivityInfo
-import android.view.WindowManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,10 +19,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.border
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -60,7 +64,7 @@ import kotlin.math.min
  * width and distance, and save. Frame lines everywhere then use the measured angle.
  */
 @Composable
-fun CalibrateScreen(nav: Navigator) {
+fun CalibrateScreen(nav: Navigator, lensKey: String? = null) {
     FullScreen(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -68,14 +72,13 @@ fun CalibrateScreen(nav: Navigator) {
     var hasCamera by remember { mutableStateOf(context.hasPermission(Manifest.permission.CAMERA)) }
     val asker = rememberPermissionAsker { }
     LaunchedEffect(Unit) { if (!hasCamera) asker.withPermission(Manifest.permission.CAMERA) { hasCamera = true } }
-    // The keyboard must not shrink the camera picture (the lines would no longer sit on the object's edges).
-    DisposableEffect(Unit) {
-        val window = context.findActivity()?.window
-        val old = window?.attributes?.softInputMode
-        window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN)
-        onDispose { if (old != null) window?.setSoftInputMode(old) }
-    }
+    // Numbers are typed in a dialog, so the keyboard never covers the panel or moves the camera picture
+    // (the lines must stay on the object's edges).
+    var editing by remember { mutableStateOf<String?>(null) }
 
+    // Main lens: the original single calibration; other lenses: their own override.
+    val savedFov = if (lensKey == null) Settings.fovCalibration else Settings.fovOverrides[lensKey]
+    fun saveFov(v: Double?) = if (lensKey == null) Settings.saveFovCalibration(v) else Settings.saveFovOverride(lensKey, v)
     var size by remember { mutableStateOf(IntSize.Zero) }
     var left by remember { mutableFloatStateOf(-1f) }
     var right by remember { mutableFloatStateOf(-1f) }
@@ -94,7 +97,9 @@ fun CalibrateScreen(nav: Navigator) {
     val reported = phone.reportedFov
 
     Box(Modifier.fillMaxSize().background(Color.Black).onSizeChanged { size = it }) {
-        if (hasCamera) CameraPreview(context, lifecycleOwner, phone, 0)
+        // The lens being calibrated (e.g. the ultra-wide the viewfinder switched to); null = the main lens.
+        val target = lensKey?.let { k -> phone.lenses.firstOrNull { it.key == k } }
+        if (hasCamera) CameraPreview(context, lifecycleOwner, phone, 0, lens = target)
         // Two draggable edge lines.
         Canvas(
             Modifier.fillMaxSize().pointerInput(size) {
@@ -113,6 +118,10 @@ fun CalibrateScreen(nav: Navigator) {
                 Offset(max(left, right), this.size.height / 2), 1.5.dp.toPx())
         }
 
+        when (editing) {
+            "width" -> NumberDialog("Object width", "cm", widthText, { editing = null }) { widthText = it.replace(',', '.'); saved = null; editing = null }
+            "distance" -> NumberDialog("Distance from the phone", "m", distanceText, { editing = null }) { distanceText = it.replace(',', '.'); saved = null; editing = null }
+        }
         Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 22.dp), verticalAlignment = Alignment.CenterVertically) {
             BackSquare { nav.pop() }
             Spacer(Modifier.width(12.dp))
@@ -133,43 +142,75 @@ fun CalibrateScreen(nav: Navigator) {
             Text("For best accuracy: 2–5 m away, object across at least half the screen, phone level.",
                 color = Color(0xFF5B6B8C), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                NumberField("Object width (cm)", widthText, Modifier.weight(1f)) { widthText = it; saved = null }
-                NumberField("Distance (m)", distanceText, Modifier.weight(1f)) { distanceText = it; saved = null }
+                ValueBox("Object width", widthText.takeIf { it.isNotBlank() }?.let { "$it cm" }, Modifier.weight(1f)) { editing = "width" }
+                ValueBox("Distance", distanceText.takeIf { it.isNotBlank() }?.let { "$it m" }, Modifier.weight(1f)) { editing = "distance" }
             }
+            Text(fmt("Lines: %.0f%% of the camera picture's width", fraction * 100), color = Color(0xFF5B6B8C), fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp))
             val result = when {
-                longFov == null -> "Enter the width and distance."
+                widthM == null || distanceM == null -> "Tap Object width and Distance to enter them."
+                longFov == null -> "Move the lines apart, onto the object's edges."
                 reported != null -> fmt("Measured %.1f° · phone reports %.1f° (frame lines %+.1f%%)", longFov, reported,
                     Calibration.errorPercent(reported, longFov))
                 else -> fmt("Measured %.1f° (the phone doesn't report its angle)", longFov)
             }
             Text(result, color = Brand.ink, fontSize = 14.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(top = 8.dp))
             Text(
-                if (Settings.fovCalibration != null) fmt("Saved calibration: %.1f°", Settings.fovCalibration) else "Not calibrated: using the phone's own figure.",
+                (if (lensKey != null) "Calibrating the ultra-wide lens. " else "") +
+                if (savedFov != null) fmt("Your calibration is in use: %.1f° (overrides the automatic figure).", savedFov)
+                else "Optional. Without it the app uses the angle the phone reports for its lens (auto-calibrated).",
                 color = Color(0xFF5B6B8C), fontSize = 12.sp,
             )
             saved?.let { Text(it, color = Color(0xFF1E8E3E), fontSize = 12.sp) }
             Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ActionButton("Use phone's figure", Brand.lightChip, Brand.ink, Modifier.weight(1f)) {
-                    Settings.saveFovCalibration(null); saved = "Calibration removed."
+                ActionButton("Use automatic", Brand.lightChip, Brand.ink, Modifier.weight(1f)) {
+                    saveFov(null); saved = "Calibration removed: using the automatic figure."
                 }
                 ActionButton("Save", if (longFov != null) Brand.accent else Color(0xFFB5C2DF), Color.White, Modifier.weight(1f)) {
-                    // Sanity limits: a phone's main camera is roughly 50–100° across its long side.
-                    if (longFov != null && longFov in 40.0..110.0) {
-                        Settings.saveFovCalibration(longFov); saved = fmt("Saved: %.1f°. Frame lines now use it.", longFov)
-                    } else if (longFov != null) saved = "That result looks wrong; check the width, distance and lines."
+                    // Sanity limits: phone lenses are roughly 50–130° across the long side (main to ultra-wide).
+                    saved = when {
+                        longFov == null -> "Enter the width and distance, and put the lines on the object's edges."
+                        longFov in 40.0..140.0 -> { saveFov(longFov); fmt("Saved: %.1f°. Frame lines now use it.", longFov) }
+                        else -> fmt("%.0f° looks wrong for a phone camera; check the width (cm), distance (m) and lines.", longFov)
+                    }
                 }
             }
         }
     }
 }
 
+/** A tappable value ("Object width · 90 cm"), edited in [NumberDialog]. */
 @Composable
-private fun NumberField(label: String, value: String, modifier: Modifier, onChange: (String) -> Unit) {
-    OutlinedTextField(
-        value, onChange, label = { Text(label, fontSize = 12.sp) }, singleLine = true, modifier = modifier,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Brand.ink, unfocusedTextColor = Brand.ink,
-            focusedLabelColor = Brand.accent, unfocusedLabelColor = Color(0xFF5B6B8C)),
+private fun ValueBox(label: String, value: String?, modifier: Modifier, onClick: () -> Unit) {
+    Column(
+        modifier.border(1.dp, if (value == null) Brand.accent else Color(0xFFB5C2DF), RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(label, color = Color(0xFF5B6B8C), fontSize = 12.sp)
+        Text(value ?: "Tap to enter", color = if (value == null) Brand.accent else Brand.ink, fontSize = 17.sp,
+            fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
+    }
+}
+
+/** Number entry in a dialog (its own window, so the keyboard doesn't disturb the camera picture). */
+@Composable
+private fun NumberDialog(title: String, unit: String, initial: String, onDismiss: () -> Unit, onDone: (String) -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    val focus = remember { FocusRequester() }
+    val v = text.replace(',', '.').toDoubleOrNull()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                text, { text = it }, singleLine = true, suffix = { Text(unit) }, modifier = Modifier.focusRequester(focus),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (v != null && v > 0) onDone(text) }),
+            )
+            LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+        },
+        confirmButton = { TextButton({ onDone(text) }, enabled = v != null && v > 0) { Text("OK") } },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
     )
 }
 

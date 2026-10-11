@@ -178,6 +178,11 @@ object Settings {
     var defaultModeId by mutableStateOf<String?>(null); private set
     /** Measured angle of view across the long side of this phone's camera picture (degrees), or null to trust the phone. */
     var fovCalibration by mutableStateOf<Double?>(null); private set
+    /** Manual angle-of-view overrides per phone lens ("cameraId" or "cameraId/physicalId"). */
+    var fovOverrides by mutableStateOf<Map<String, Double>>(emptyMap()); private set
+    /** Viewfinder overlays the user can hide. */
+    var showShotSizes by mutableStateOf(true); private set
+    var showScope by mutableStateOf(true); private set
     var kits by mutableStateOf<List<Kit>>(emptyList()); private set
 
     // Exposure and focus tools in the viewfinder (Module D), kept between sessions.
@@ -205,6 +210,12 @@ object Settings {
         defaultAspect = p.getString("defaultAspect", null) ?: "2.39:1"
         defaultModeId = p.getString("defaultModeId", null)
         fovCalibration = p.getFloat("fovCalibration", 0f).takeIf { it > 0f }?.toDouble()
+        fovOverrides = (p.getString("fovOverrides", null) ?: "").lines().mapNotNull { line ->
+            val f = line.split('\t'); val v = f.getOrNull(1)?.toDoubleOrNull()
+            if (f.size == 2 && v != null) f[0] to v else null
+        }.toMap()
+        showShotSizes = p.getBoolean("showShotSizes", true)
+        showScope = p.getBoolean("showScope", true)
         falseColour = p.getBoolean("falseColour", false)
         zebras = p.getBoolean("zebras", false)
         zebraLevel = p.getInt("zebraLevel", Zebra.DEFAULT).takeIf { it in Zebra.levels } ?: Zebra.DEFAULT
@@ -265,6 +276,14 @@ object Settings {
         distortionVersion++
     }
     fun chooseScope(k: ScopeKind) { scope = k; p.edit().putString("scope", k.code).apply() }
+    /** Manual override for a lens; for the default lens the older single calibration also counts. */
+    fun fovOverride(lensKey: String, isDefault: Boolean): Double? = fovOverrides[lensKey] ?: if (isDefault) fovCalibration else null
+    fun saveFovOverride(lensKey: String, v: Double?) {
+        fovOverrides = if (v == null) fovOverrides - lensKey else fovOverrides + (lensKey to v)
+        p.edit().putString("fovOverrides", fovOverrides.entries.joinToString("\n") { "${it.key}\t${it.value}" }).apply()
+    }
+    fun chooseShowShotSizes(on: Boolean) { showShotSizes = on; p.edit().putBoolean("showShotSizes", on).apply() }
+    fun chooseShowScope(on: Boolean) { showScope = on; p.edit().putBoolean("showScope", on).apply() }
     fun chooseDefaultAspect(a: String) { defaultAspect = a; p.edit().putString("defaultAspect", a).apply() }
     fun chooseDefaultMode(id: String?) { defaultModeId = id; p.edit().putString("defaultModeId", id).apply() }
     /** True once a lens has been picked on this phone (otherwise a quick recce starts with the generic prime set). */

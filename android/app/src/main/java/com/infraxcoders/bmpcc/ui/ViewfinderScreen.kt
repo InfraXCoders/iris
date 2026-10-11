@@ -38,6 +38,9 @@ import com.infraxcoders.bmpcc.core.Lut3D
 import com.infraxcoders.bmpcc.core.LutInput
 import com.infraxcoders.bmpcc.data.LutStore
 import com.infraxcoders.bmpcc.platform.PictureEffect
+import com.infraxcoders.bmpcc.platform.PhoneLensScanner
+import com.infraxcoders.bmpcc.platform.PhysicalLens
+import com.infraxcoders.bmpcc.core.PhoneOptics
 import com.infraxcoders.bmpcc.platform.PictureTools
 import com.infraxcoders.bmpcc.platform.ScopeAnalyzer
 import com.infraxcoders.bmpcc.platform.ScopeResult
@@ -57,6 +60,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -110,6 +116,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -178,6 +185,14 @@ class PhoneCamera {
     var reportedFov by mutableStateOf<Double?>(null)
     /** true when [longSideFov] comes from the user's calibration. */
     var calibrated by mutableStateOf(false)
+    /** Where [longSideFov] comes from (shown in the status chip). */
+    var fovSource by mutableStateOf(PhoneOptics.Source.ASSUMED)
+    /** The phone's back lenses (found on the first start), the one in use, and any that failed to stream. */
+    var lenses by mutableStateOf<List<PhoneOptics.Lens>>(emptyList())
+    var lens by mutableStateOf<PhoneOptics.Lens?>(null)
+    var badLenses by mutableStateOf<Set<String>>(emptySet())
+    /** Angle across the long side for [l], with the user's override if any. */
+    fun fovFor(l: PhoneOptics.Lens): Double = com.infraxcoders.bmpcc.data.Settings.fovOverride(l.key, l.isDefault) ?: l.longSideFov
     var streamAspect by mutableStateOf(4.0 / 3.0)
     var minZoom by mutableStateOf(1.0)
     var maxZoom by mutableStateOf(4.0)
@@ -244,17 +259,31 @@ class PhoneCamera {
     }
 
     @OptIn(ExperimentalCamera2Interop::class)
-    fun readOptics(c: Camera) {
+    fun readOptics(c: Camera, lens: PhoneOptics.Lens? = null, context: Context? = null) {
+        // Angle of view: re-read from the chosen lens's own characteristics (its physical camera when it has one) on
+        // every switch; else this camera's characteristics.
+        val info = runCatching { Camera2CameraInfo.from(c.cameraInfo) }.getOrNull()
+        val fresh = if (lens != null && context != null) PhoneLensScanner.reread(context, lens, streamAspect) else null
+        val reading = fresh?.first?.takeIf { it.source != PhoneOptics.Source.ASSUMED }
+            ?: lens?.let { PhoneOptics.Reading(it.longSideFov, it.source) }
+            ?: info?.let { PhoneLensScanner.reading(PhoneLensScanner.getter(it), streamAspect) }
+            ?: PhoneOptics.Reading(PhoneOptics.DEFAULT_FOV, PhoneOptics.Source.ASSUMED)
+        fovMeasured = reading.source != PhoneOptics.Source.ASSUMED
+        reportedFov = reading.longSideFov.takeIf { fovMeasured }
+        val key = lens?.key ?: info?.cameraId ?: "default"
+        val override = com.infraxcoders.bmpcc.data.Settings.fovOverride(key, lens?.isDefault ?: true)
+        calibrated = override != null
+        longSideFov = override ?: reading.longSideFov
+        fovSource = if (override != null) PhoneOptics.Source.MANUAL else reading.source
+        this.lens = lens
         runCatching {
-            val info = Camera2CameraInfo.from(c.cameraInfo)
-            val physical = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
-            val pixels = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
-            val active = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
-            val focal = info.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.minOrNull()
+            if (info == null) return@runCatching
             val caps = info.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
             val isoRange = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
             val timeRange = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
-            info.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)?.firstOrNull()?.let { if (it > 0) phoneAperture = it.toDouble() }
+            // The aperture of the lens actually streaming (a physical lens may differ from the logical camera's).
+            (fresh?.second ?: info.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)?.firstOrNull()?.toDouble())
+                ?.let { if (it > 0) phoneAperture = it }
             if (caps != null && isoRange != null && timeRange != null &&
                 caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)
             ) {
@@ -262,21 +291,11 @@ class PhoneCamera {
                 exposureMinNs = timeRange.lower; exposureMaxNs = timeRange.upper
                 manualSupported = isoMax > isoMin && exposureMaxNs > exposureMinNs
             }
-            if (physical != null && pixels != null && active != null && focal != null && focal > 0) {
-                val activeW = physical.width * active.width().toDouble() / pixels.width
-                val activeH = physical.height * active.height().toDouble() / pixels.height
-                val long = max(activeW, activeH)
-                val short = min(activeW, activeH)
-                // A 4:3 stream uses the full width of a 4:3 sensor; on a wider sensor it is cropped at the sides.
-                val streamLong = min(long, short * streamAspect)
-                longSideFov = 2 * Optics.degrees(atan(streamLong / (2 * focal)))
-                fovMeasured = true
-                reportedFov = longSideFov
-            }
         }
-        calibrated = false
-        com.infraxcoders.bmpcc.data.Settings.fovCalibration?.let { longSideFov = it; calibrated = true }
-        c.cameraInfo.zoomState.value?.let {
+        if (lens?.physicalId != null) {
+            // A physical lens streamed directly: no zoom (the frame is drawn at its true size on the full picture).
+            minZoom = 1.0; maxZoom = 1.0; zoom = 1.0
+        } else c.cameraInfo.zoomState.value?.let {
             minZoom = it.minZoomRatio.toDouble()
             maxZoom = it.maxZoomRatio.toDouble()
             zoom = it.zoomRatio.toDouble()
@@ -369,7 +388,6 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     var lutSplit by remember { mutableFloatStateOf(0.5f) }
     var expoMenu by remember { mutableStateOf(false) }
     var distortionDialog by remember { mutableStateOf(false) }
-    var calibrationNote by remember { mutableStateOf(false) }
     var customFocal by remember { mutableStateOf(false) }
     var markerType by remember { mutableStateOf<MarkerType?>(null) }
     var screen by remember { mutableStateOf(IntSize.Zero) }
@@ -385,6 +403,16 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     fun edit(change: (RecceShot) -> RecceShot) = RecceStore.updateShot(sessionId, sceneId, shotId, change)
 
     LaunchedEffect(Unit) { if (!hasCamera) asker.withPermission(Manifest.permission.CAMERA) { hasCamera = true } }
+    // Camera access turned on in the phone's settings while away: pick it up on return.
+    DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME && !hasCamera && context.hasPermission(Manifest.permission.CAMERA)) {
+                hasCamera = true; phone.error = null
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
 
     val lens = shot.lens
     val mode = shot.sensorMode
@@ -395,19 +423,38 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     // Portrait: controls above and below. Landscape: controls at the sides and a thin bar top and bottom.
     val w = screen.width.toDouble()
     val h = screen.height.toDouble()
+    // The camera picture fills the whole screen; the frame is a mask over it. A small side inset keeps the frame's
+    // corners on its true edges, off the screen's edges.
     val video = Monitor.aspectFill(if (landscape) phone.streamAspect else 1 / phone.streamAspect, w, h)
-    val area = if (landscape) Monitor.centredArea(w, h, with(density) { 96.dp.toPx() }.toDouble(), with(density) { 86.dp.toPx() }.toDouble())
-    else Monitor.centredArea(w, h, 0.0, min(with(density) { 210.dp.toPx() }.toDouble(), h * 0.3))
+    // Normally the frame sits clear of the controls. A wide frame that doesn't fit there uses (almost) the whole
+    // screen instead, under the see-through controls, so it is drawn as large as the phone can show it.
+    val portraitBar = min(with(density) { 210.dp.toPx() }.toDouble(), h * 0.3)
+    val controlArea = if (landscape) Monitor.centredArea(w, h, with(density) { 96.dp.toPx() }.toDouble(), with(density) { 86.dp.toPx() }.toDouble())
+    else Monitor.centredArea(w, h, with(density) { 10.dp.toPx() }.toDouble(), portraitBar)
+    val fullArea = if (landscape) Monitor.centredArea(w, h, with(density) { 8.dp.toPx() }.toDouble(), with(density) { 8.dp.toPx() }.toDouble())
+    else Monitor.centredArea(w, h, with(density) { 4.dp.toPx() }.toDouble(), portraitBar)
+    val margin = when {
+        compare -> max(1.0, shot.focalMm / compareFocals(focals, shot.focalMm).minOrNull().let { it ?: shot.focalMm }) * 1.03
+        surroundings -> 1.35
+        else -> 1.0
+    }
+    fun layoutWith(fov: Double, minZ: Double, maxZ: Double, fixed: Double?, inArea: ScreenRect) =
+        if (reference != null && w > 0 && h > 0) Monitor.layout(
+            reference, PhoneView.fromFormat(fov, phone.streamAspect, !landscape), video, inArea, minZ, maxZ, margin = margin, fixedZoom = fixed,
+        ) else null
+    fun fitsSomewhere(fov: Double, minZ: Double, maxZ: Double) =
+        layoutWith(fov, minZ, maxZ, null, controlArea)?.lines?.fits == true || layoutWith(fov, minZ, maxZ, null, fullArea)?.lines?.fits == true
+    // Lens switching: the main lens when the frame fits, else the narrowest wider lens that fits (e.g. the ultra-wide
+    // for 24 mm), else the widest. Kept while the zoom is locked.
+    val usableLenses = phone.lenses.filter { it.key !in phone.badLenses }
+    val chosenLens = if (locked && phone.lens != null) phone.lens else
+        PhoneOptics.choose(usableLenses) { l -> fitsSomewhere(phone.fovFor(l), l.minZoom, l.maxZoom) }
     val view = PhoneView.fromFormat(phone.longSideFov, phone.streamAspect, !landscape)
-    val layout = if (reference != null && w > 0 && h > 0) Monitor.layout(
-        reference, view, video, area, phone.minZoom, phone.maxZoom,
-        margin = when {
-            compare -> max(1.0, shot.focalMm / compareFocals(focals, shot.focalMm).minOrNull().let { it ?: shot.focalMm }) * 1.03
-            surroundings -> 1.35
-            else -> 1.0
-        },
-        fixedZoom = if (locked) phone.zoom else null,
-    ) else null
+    val fixedZoom = if (locked) phone.zoom else null
+    val inControls = layoutWith(phone.longSideFov, phone.minZoom, phone.maxZoom, fixedZoom, controlArea)
+    val useFullScreen = inControls != null && !inControls.lines.fits
+    val area = if (useFullScreen) fullArea else controlArea
+    val layout = if (useFullScreen) layoutWith(phone.longSideFov, phone.minZoom, phone.maxZoom, fixedZoom, fullArea) else inControls
 
     // The lens data drives the phone: zoom, exposure, white balance.
     LaunchedEffect(layout?.zoom, phone.camera, locked) { if (!locked) layout?.let { phone.applyZoom(it.zoom) } }
@@ -474,12 +521,21 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         LaunchedEffect(scopeKind) { scopes.clear() }
         if (hasCamera) CameraPreview(
             context, lifecycleOwner, phone, rotation, lut, lutInput, if (lutCompare && lut != null) lutSplit * w.toFloat() else null,
-            tools, scopes, scopeKind, cpuPicture,
+            tools, scopes, scopeKind, cpuPicture, lens = chosenLens,
         )
         if (cpuPicture) CpuPicture(scopes, video)
+        // Label in the frame's corner, and (when the frame is wider than the phone shows) its true size beyond the screen.
+        val frameLabel = listOfNotNull(
+            shot.focalLength.ifBlank { null }, shot.aspectRatio, reference?.let { "${Math.round(it.deliveredFov.horizontal)}°" },
+        ).joinToString(" · ")
+        val trueFrame = layout?.takeIf { !it.lines.fits }?.let { l ->
+            val tw = area.width * l.lines.widthFraction; val th = area.height * l.lines.heightFraction
+            ScreenRect(area.midX - tw / 2, area.midY - th / 2, tw, th)
+        }
         MonitorOverlay(
             layout?.frame, layout?.lines, shot.markers, showThirds, showCentre, showSafe,
-            maskAlpha = if (surroundings) 0.45f else 0.82f,
+            maskAlpha = if (surroundings) 0.3f else 0.55f,
+            label = frameLabel, trueFrame = trueFrame, approximate = phone.fovSource == PhoneOptics.Source.ASSUMED,
             modifier = Modifier.fillMaxSize().pointerInput(markerType, layout?.frame) {
                 detectTapGestures { p ->
                     val t = markerType ?: return@detectTapGestures
@@ -510,10 +566,11 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
             CompareOverlay(others)
         }
 
-        if (scopeKind != ScopeKind.NONE && hasCamera) ScopePanel(
+        if (scopeKind != ScopeKind.NONE && hasCamera && Settings.showScope) ScopePanel(
             scopes, scopeKind,
-            if (landscape) Modifier.align(Alignment.BottomStart).padding(start = 70.dp, bottom = 62.dp)
-            else Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = 12.dp, bottom = 222.dp),
+            // Bottom-left corner, above the controls (clear of the status chip at the top).
+            if (landscape) Modifier.align(Alignment.BottomStart).padding(start = 70.dp, bottom = 60.dp)
+            else Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = 10.dp, bottom = 226.dp),
         )
 
         // Above the frame overlays, so it gets the drags.
@@ -525,7 +582,8 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
                 .padding(start = 14.dp, end = 14.dp, top = if (landscape) 8.dp else 22.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Pill(QuickRecce.shortName(shot.baseCamera)) { setup = true }
+            // In landscape the tool buttons run down the left edge, so the camera name sits on the right.
+            if (!landscape) Pill(QuickRecce.shortName(shot.baseCamera)) { setup = true }
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(shot.focalLength, color = Color(0xFFC9D8FF), fontSize = if (landscape) 24.sp else 32.sp,
                     fontFamily = FontFamily.Monospace, maxLines = 1)
@@ -539,6 +597,7 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
                     Text(it, color = Color(0xFFAFC0E6), fontSize = 11.sp, fontFamily = FontFamily.Monospace, letterSpacing = 1.sp)
                 }
             }
+            if (landscape) { Pill(QuickRecce.shortName(shot.baseCamera)) { setup = true }; Spacer(Modifier.width(8.dp)) }
             Box {
                 Pill(shot.aspectRatio, mono = true) { aspectMenu = true }
                 DropdownMenu(aspectMenu, { aspectMenu = false }) {
@@ -548,42 +607,61 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         }
 
         // ── Messages (and record on the real camera when connected over Bluetooth) ──
-        val warn = when {
-            phone.error != null -> phone.error
-            layout != null && !layout.lines.fits -> "Wider than the phone camera can see: the frame shows the phone's widest view."
-            ShotOptics.depthOfField(shot)?.tooClose == true -> fmt("Closer than this lens can focus (%.2f m).", lens.minimumFocusDistance)
-            !phone.fovMeasured && phone.camera != null -> "This phone didn't report its lens angle; using 70°."
-            else -> null
+        // One status chip: lens and calibration, plus any warnings (short; tap for the full text).
+        val statusNotes = buildList {
+            if (!hasCamera) add(StatusNote("Camera access off", "Camera access is off. Allow it in the phone's settings to use the viewfinder.", true))
+            else phone.error?.let { add(StatusNote("Camera error", it, true)) }
+            if (layout != null && !layout.lines.fits) add(StatusNote(
+                "Wider than the phone", "Wider than every lens on this phone can see: the frame shows the phone's widest view.", true,
+            ))
+            if (ShotOptics.depthOfField(shot)?.tooClose == true) add(StatusNote(
+                "Too close to focus", fmt("Closer than this lens can focus (%.2f m).", lens.minimumFocusDistance), true,
+            ))
+            if (cpuPicture && scopes.available) add(StatusNote("Reduced-quality preview", "Reduced-quality live preview (full quality needs Android 13+ graphics).", false))
+            if ((scopeKind != ScopeKind.NONE || cpuPicture) && !scopes.available) add(StatusNote(
+                "Scopes unavailable", "This phone can't run the scopes or picture tools next to the camera picture." +
+                    (if (lut != null) " The LUT is applied to saved frames." else ""), false,
+            ))
+            match?.let { m ->
+                if (m.stopsOff > 0.5) add(StatusNote(fmt("%.1f stops dark", m.stopsOff), fmt("Phone picture %.1f stops darker than the real exposure (phone's limit).", m.stopsOff), false))
+                else if (m.stopsOff < -0.5) add(StatusNote(fmt("%.1f stops bright", -m.stopsOff), fmt("Phone picture %.1f stops brighter than the real exposure (phone's limit).", -m.stopsOff), false))
+            }
+        }
+        val mainLens = phone.lenses.firstOrNull { it.isDefault }
+        val current = phone.lens
+        val lensLabel = when {
+            current != null && !current.isDefault && (current.physicalId != null || mainLens == null || current.widestFov > mainLens.widestFov + 1) -> "Ultra-wide"
+            phone.zoom < 0.99 -> fmt("Wide %.1f×", phone.zoom)
+            else -> "Main lens"
+        }
+        val calibrationLabel = when (phone.fovSource) {
+            PhoneOptics.Source.MANUAL -> "Calibrated"
+            PhoneOptics.Source.INTRINSIC, PhoneOptics.Source.SENSOR -> "Auto-calibrated"
+            PhoneOptics.Source.ASSUMED -> "FOV assumed 70°"
         }
         Column(
-            Modifier.align(Alignment.TopCenter).padding(top = if (landscape) 76.dp else 96.dp, start = if (landscape) 110.dp else 24.dp, end = if (landscape) 110.dp else 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            if (landscape) Modifier.align(Alignment.TopEnd).padding(top = 52.dp, end = 80.dp).widthIn(max = 300.dp)
+            else Modifier.align(Alignment.TopCenter).padding(top = 96.dp, start = 24.dp, end = 24.dp),
+            horizontalAlignment = if (landscape) Alignment.End else Alignment.CenterHorizontally,
         ) {
             if (link) RecordPill()
-            warn?.let { VfPill(it, Color(0xCC8A3A00)) }
+            if (phone.camera != null || statusNotes.isNotEmpty()) StatusChip(
+                "$lensLabel · ${fmt("%.0f°", Optics.fovFromHalfTan(Optics.halfTan(phone.longSideFov) / phone.zoom.coerceAtLeast(0.1)))} · $calibrationLabel",
+                phone.fovSource.label, statusNotes,
+                onCalibrate = { nav.push(Dest.Calibrate(current?.takeUnless { it.isDefault }?.key)) },
+                onPhoneInfo = { nav.push(Dest.PhoneInfo) },
+            )
             flash?.let { VfPill(it, Color(0xCC1E6B2E)) }
             markerType?.let { VfPill("Tap inside the frame to place: ${it.label}", Color(0xCC000000)) }
-            if (calibrationNote && !phone.calibrated) Pill(
-                "Phone not calibrated: frame lines can be a few % off. Calibrate ›", modifier = Modifier.padding(top = 6.dp),
-                color = Color(0xCC000000), textColor = Color.White,
-            ) { calibrationNote = false; nav.push(Dest.Calibrate) }
-            if (cpuPicture && scopes.available) VfPill("Reduced-quality live preview (full quality needs Android 13+ graphics).", Color(0xCC000000))
-            if ((scopeKind != ScopeKind.NONE || cpuPicture) && !scopes.available)
-                VfPill("This phone can't run the scopes or picture tools next to the camera picture." +
-                    (if (lut != null) " The LUT is applied to saved frames." else ""), Color(0xCC000000))
-            match?.let { m ->
-                if (m.stopsOff > 0.5) VfPill(fmt("Phone picture %.1f stops darker than the real exposure (phone's limit).", m.stopsOff), Color(0xCC000000))
-                else if (m.stopsOff < -0.5) VfPill(fmt("Phone picture %.1f stops brighter than the real exposure (phone's limit).", -m.stopsOff), Color(0xCC000000))
-            }
             if (tools.falseColour) FalseColourLegend()
         }
 
         // Pieces used in both layouts.
         val sizeButtons: @Composable () -> Unit = {
-            ShotSize.entries.forEach { size ->
+            if (Settings.showShotSizes) ShotSize.entries.forEach { size ->
                 val target = FocalOptions.focalFor(size, focals, mode, lens.anamorphicSqueeze)
                 val active = target != null && abs(target - shot.focalMm) < 0.5
-                RoundButton(size.label.take(1), selected = active, size = 40.dp) {
+                RoundButton(size.label.take(1), selected = active, size = 32.dp, modifier = Modifier.alpha(0.72f)) {
                     target?.let { f -> setFocal(f); if (!locked) edit { it.copy(shotType = size.shotType) } }
                 }
             }
@@ -598,15 +676,11 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
                     DropdownMenuItem(
                         {
                             Text(
-                                fmt("Phone lens %.1f° · %s", phone.longSideFov, when {
-                                    phone.calibrated -> "calibrated"
-                                    phone.fovMeasured -> "as reported, not calibrated"
-                                    else -> "assumed"
-                                }) + "\nCalibrate phone…",
+                                fmt("Phone lens %.1f° · %s", phone.longSideFov, phone.fovSource.label) + "\nCalibrate manually (optional)…",
                                 fontSize = 13.sp,
                             )
                         },
-                        { guidesMenu = false; nav.push(Dest.Calibrate) },
+                        { guidesMenu = false; nav.push(Dest.Calibrate(phone.lens?.takeUnless { it.isDefault }?.key)) },
                     )
                     DropdownMenuItem({ Text("Sun planner (sun path, AR)…", fontSize = 13.sp) }, {
                         guidesMenu = false; nav.push(Dest.Sun(sessionId, sceneId, shotId, shot.plannedTime ?: System.currentTimeMillis()))
@@ -625,7 +699,9 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
                         { Text(if (Distortion.isCustom(lens)) "Edit your distortion measurement…" else "Enter this lens's distortion…", fontSize = 13.sp) },
                         { guidesMenu = false; distortionDialog = true },
                     )
-                    ToggleItem("Lock zoom", locked) { locked = it }
+                    ToggleItem("Lock zoom (and lens)", locked) { locked = it }
+                    ToggleItem("W / M / C buttons", Settings.showShotSizes) { Settings.chooseShowShotSizes(it) }
+                    if (scopeKind != ScopeKind.NONE) ToggleItem("Show ${scopeKind.label.lowercase()}", Settings.showScope) { Settings.chooseShowScope(it) }
                     HorizontalDivider()
                     MarkerType.entries.forEach { t ->
                         DropdownMenuItem({ Text("Place marker: ${t.label}" + if (markerType == t) "  ✓" else "") }, { markerType = t; guidesMenu = false })
@@ -745,10 +821,6 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         }
     }
     LaunchedEffect(flash) { if (flash != null) { kotlinx.coroutines.delay(2500); flash = null } }
-    // Reminder (for a few seconds) while the phone's angle of view isn't calibrated.
-    LaunchedEffect(phone.camera != null, phone.calibrated) {
-        if (phone.camera != null && !phone.calibrated) { calibrationNote = true; kotlinx.coroutines.delay(8000); calibrationNote = false }
-    }
 
     if (setup) RecceSheet(
         title = "Setup", subtitle = "Camera, lens and frame for shot ${shot.shotNumber}.", button = "Apply",
@@ -780,15 +852,28 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     }
 }
 
-/** "T2.8 · ISO 800 · 24p · 180° · Tilt 0°" (tap for exposure settings). Reads the tilt here so only this line updates. */
+/** "T2.8 · ISO 800 · 24p · 180° · Level ✓ · Pitch 0°" (tap for exposure settings). Reads the tilt here so only this line updates. */
 @Composable
 private fun ExposureLine(shot: RecceShot, tilt: State<Tilt?>, prefix: String? = null, onClick: () -> Unit) {
-    val parts = listOfNotNull(
-        prefix, tText(shot.aperture), "ISO ${shot.iso}", "${shot.fps}p", shot.shutter,
-        tilt.value?.let { "Tilt ${Math.round(it.pitch)}°" },
-    )
+    // The T-stop shows only once it's set (tap the line to set it). Level is the same roll reading as the level line,
+    // green when within 1°; pitch (camera pointing up / down) follows it.
+    val t = tilt.value
+    val text = buildAnnotatedString {
+        append(listOfNotNull(
+            prefix, Exposure.stop(shot.aperture)?.let { tText(shot.aperture) }, "ISO ${shot.iso}", "${shot.fps}p", shot.shutter,
+        ).joinToString(" · "))
+        if (t != null) {
+            append(" · ")
+            val level = abs(t.roll) < 1f
+            withStyle(SpanStyle(color = if (level) Color(0xFF34C759) else Color.White)) {
+                append(if (level) "Level ✓" else "Level ${Math.round(t.roll)}°")
+            }
+            append(" · Pitch ${Math.round(t.pitch)}°")
+        }
+    }
     Text(
-        parts.joinToString(" · "), color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.Monospace, maxLines = 1,
+        text, color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.Monospace, maxLines = 1,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         modifier = Modifier.clickable(onClick = onClick).background(Color(0x66000000), RoundedCornerShape(50)).padding(horizontal = 12.dp, vertical = 6.dp),
     )
 }
@@ -1008,12 +1093,15 @@ private fun ToggleItem(label: String, value: Boolean, onChange: (Boolean) -> Uni
     DropdownMenuItem(text = { Text(label) }, trailingIcon = { Switch(value, onChange) }, onClick = { onChange(!value) })
 }
 
+@OptIn(ExperimentalCamera2Interop::class)
 @Composable
 internal fun CameraPreview(
     context: Context, lifecycleOwner: androidx.lifecycle.LifecycleOwner, phone: PhoneCamera, rotation: Int,
     lut: Lut3D? = null, lutInput: LutInput = LutInput.REC709, splitPx: Float? = null,
     tools: PictureTools = PictureTools(), scopes: ScopeAnalyzer? = null, scopeKind: ScopeKind = ScopeKind.NONE,
     pictureOn: Boolean = false,
+    /** The phone lens to use (null = the default back camera, without lens switching). */
+    lens: PhoneOptics.Lens? = null,
 ) {
     val previewView = remember {
         PreviewView(context).apply {
@@ -1024,41 +1112,87 @@ internal fun CameraPreview(
     // Re-bound when the screen turns, so the picture and photos have the right orientation.
     // The scope stream is only bound while a scope is shown (rebinding blinks the picture once).
     val scopeOn = scopes != null && (scopeKind != ScopeKind.NONE || pictureOn)
-    DisposableEffect(lifecycleOwner, rotation, scopeOn) {
+    // A non-default lens is bound by its id (and physical id); the default lens through the default selector.
+    val bindKey = lens?.takeUnless { it.isDefault }?.key
+    DisposableEffect(lifecycleOwner, rotation, scopeOn, bindKey) {
         val future = ProcessCameraProvider.getInstance(context)
         var provider: ProcessCameraProvider? = null
         var disposed = false
+        var stateObserver: (() -> Unit)? = null
         future.addListener({
             if (disposed) return@addListener
             runCatching {
                 val p = future.get()
                 provider = p
+                // First start: find the phone's back lenses (and their angles of view) for lens switching.
+                if (phone.lenses.isEmpty()) phone.lenses = runCatching { PhoneLensScanner.scan(context, p, phone.streamAspect) }.getOrDefault(emptyList())
                 val rotation = displayRotation(context)
+                val bindLens = lens?.takeUnless { it.isDefault }
+                val physicalId = bindLens?.physicalId
+                val cameraSelector = if (bindLens == null) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.Builder()
+                    .addCameraFilter { infos -> infos.filter { runCatching { Camera2CameraInfo.from(it).cameraId }.getOrNull() == bindLens.cameraId } }
+                    .build()
                 val selector = ResolutionSelector.Builder().setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY).build()
-                val preview = Preview.Builder().setResolutionSelector(selector).setTargetRotation(rotation).build()
+                val preview = Preview.Builder().setResolutionSelector(selector).setTargetRotation(rotation)
+                    .also { PhysicalLens.apply(it, physicalId) }.build()
                     .also { it.setSurfaceProvider(previewView.surfaceProvider) }
                 val capture = ImageCapture.Builder().setResolutionSelector(selector).setTargetRotation(rotation)
-                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
+                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                    .also { PhysicalLens.apply(it, physicalId) }.build()
                 p.unbindAll()
-                val cam = if (scopeOn && scopes != null) {
-                    runCatching {
-                        p.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture, scopes.useCase(rotation))
-                            .also { scopes.available = true }
-                    }.getOrElse {
-                        // This phone can't run three streams: keep the picture and photos, no scopes.
-                        p.unbindAll(); scopes.available = false
-                        p.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture)
-                    }
-                } else p.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture)
+                val cam = try {
+                    if (scopeOn && scopes != null) {
+                        runCatching {
+                            p.bindToLifecycle(lifecycleOwner, cameraSelector, preview, capture, scopes.useCase(rotation, physicalId))
+                                .also { scopes.available = true }
+                        }.getOrElse {
+                            // This phone can't run three streams: keep the picture and photos, no scopes.
+                            p.unbindAll(); scopes.available = false
+                            p.bindToLifecycle(lifecycleOwner, cameraSelector, preview, capture)
+                        }
+                    } else p.bindToLifecycle(lifecycleOwner, cameraSelector, preview, capture)
+                } catch (e: Exception) {
+                    // This lens can't be opened this way: never pick it again (the default lens is used instead).
+                    if (bindLens != null) { phone.badLenses = phone.badLenses + bindLens.key; return@runCatching }
+                    throw e
+                }
                 phone.capture = capture
                 phone.preview = preview
-                phone.readOptics(cam)
+                phone.readOptics(cam, lens ?: phone.lenses.firstOrNull { it.isDefault }, context)
                 phone.camera = cam
+                // Some phones accept a physical lens but never send its picture: fall back after 3 s without frames.
+                if (bindLens != null) {
+                    // A camera error on this lens (e.g. the phone rejects streaming it): use the default lens instead.
+                    val obs = androidx.lifecycle.Observer<androidx.camera.core.CameraState> { st ->
+                        if (!disposed && st.error != null) phone.badLenses = phone.badLenses + bindLens.key
+                    }
+                    cam.cameraInfo.cameraState.observe(lifecycleOwner, obs)
+                    stateObserver = { cam.cameraInfo.cameraState.removeObserver(obs) }
+                    // No picture after 3 s while the screen is in front: same.
+                    previewView.postDelayed({
+                        val inFront = lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                        if (!disposed && inFront && previewView.previewStreamState.value != PreviewView.StreamState.STREAMING) {
+                            phone.badLenses = phone.badLenses + bindLens.key
+                        }
+                    }, 3000)
+                }
+                // The real stream shape (4:3, or 16:9 on phones without 4:3): angles of view depend on it.
+                previewView.postDelayed({
+                    if (disposed) return@postDelayed
+                    preview.resolutionInfo?.resolution?.let { r ->
+                        val a = max(r.width, r.height).toDouble() / min(r.width, r.height)
+                        if (abs(a - phone.streamAspect) > 0.01) {
+                            phone.streamAspect = a
+                            phone.lenses = runCatching { PhoneLensScanner.scan(context, p, a) }.getOrDefault(phone.lenses)
+                            phone.readOptics(cam, phone.lenses.firstOrNull { it.key == phone.lens?.key } ?: phone.lens, context)
+                        }
+                    }
+                }, 1500)
                 // Re-apply the zoom chosen before this (re)bind.
                 cam.cameraControl.setZoomRatio(phone.zoom.coerceIn(phone.minZoom, phone.maxZoom).toFloat())
             }.onFailure { phone.error = "The camera couldn't start: ${it.message}" }
         }, ContextCompat.getMainExecutor(context))
-        onDispose { disposed = true; provider?.unbindAll(); phone.camera = null }
+        onDispose { disposed = true; stateObserver?.invoke(); provider?.unbindAll(); phone.camera = null }
     }
     AndroidView({ previewView }, Modifier.fillMaxSize(), update = { v ->
         PictureEffect.apply(v, lut, lutInput, splitPx ?: -1f, tools)
@@ -1095,6 +1229,39 @@ private fun DistortionDialog(current: Double?, lensName: String, focal: String, 
             }
         },
     )
+}
+
+/** A note for the status chip: a short label and the full text. */
+private data class StatusNote(val short: String, val full: String, val warning: Boolean)
+
+/**
+ * The viewfinder's single status chip: lens and calibration when all is well; otherwise the first warning, short,
+ * with "+n". Tap to open the full text of everything (and a link to manual calibration).
+ */
+@Composable
+private fun StatusChip(base: String, detail: String, notes: List<StatusNote>, onCalibrate: () -> Unit, onPhoneInfo: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val first = notes.firstOrNull()
+    val warn = notes.any { it.warning }
+    Column(
+        Modifier.padding(top = 6.dp).widthIn(max = 340.dp)
+            .background(if (warn) Color(0xD98A3A00) else Color(0x99000000), RoundedCornerShape(14.dp))
+            .clickable { open = !open }.padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            if (first == null) base else (if (first.warning) "⚠ " else "") + first.short + if (notes.size > 1) "  +${notes.size - 1}" else "",
+            color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+        if (open) {
+            for (n in notes) Text(n.full, color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            Text("$base\n$detail", color = Color(0xFFC9D8FF), fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
+            Text("Calibrate this lens manually (optional) ›", color = Color(0xFF8FAAFF), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable(onClick = onCalibrate).padding(top = 4.dp))
+            Text("Phone info (lenses, sensors) ›", color = Color(0xFF8FAAFF), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable(onClick = onPhoneInfo).padding(top = 4.dp))
+        }
+    }
 }
 
 /** Record / timecode from the connected camera; reads the timecode here so only this pill redraws as it runs. */
@@ -1138,9 +1305,9 @@ private fun ScopePanel(scopes: ScopeAnalyzer, kind: ScopeKind, modifier: Modifie
     // Read here, so only the panel redraws with each scope frame.
     val result: ScopeResult? = scopes.result
     var big by remember { mutableStateOf(false) }
-    val pw = if (big) 280.dp else 190.dp
-    val ph = if (big) 150.dp else 100.dp
-    Column(modifier.background(Color(0xB3000000), RoundedCornerShape(8.dp)).clickable { big = !big }.padding(6.dp)) {
+    val pw = if (big) 250.dp else 140.dp
+    val ph = if (big) 130.dp else 70.dp
+    Column(modifier.background(Color(0x73000000), RoundedCornerShape(8.dp)).clickable { big = !big }.padding(4.dp)) {
         Box(Modifier.size(pw, ph)) {
             val grid = Color(0x55FFFFFF)
             Canvas(Modifier.fillMaxSize()) {
@@ -1181,7 +1348,10 @@ private fun ScopePanel(scopes: ScopeAnalyzer, kind: ScopeKind, modifier: Modifie
             }
         }
         val stats = result?.histogram?.let { fmt(" · Clip %.1f%% · Crush %.1f%%", it.clipped * 100, it.crushed * 100) } ?: ""
-        Text(kind.label + stats, color = Color.White, fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+        Text(
+            (if (big) kind.label else "") + stats.let { if (big) it else it.removePrefix(" · ") }, color = Color.White.copy(alpha = 0.85f),
+            fontSize = if (big) 10.sp else 8.sp, fontFamily = FontFamily.Monospace, maxLines = 1,
+        )
     }
 }
 
@@ -1220,18 +1390,47 @@ private fun SplitHandle(fraction: Float, width: Float, onChange: (Float) -> Unit
 @Composable
 private fun MonitorOverlay(
     frame: ScreenRect?, lines: FrameLines?, markers: List<ShotMarker>,
-    thirds: Boolean, centre: Boolean, safe: Boolean, maskAlpha: Float, modifier: Modifier,
+    thirds: Boolean, centre: Boolean, safe: Boolean, maskAlpha: Float,
+    /** "24mm · 16:9 · 51°", drawn inside the frame's top-left corner. */
+    label: String = "",
+    /** The frame's true size when it is wider than the phone shows (drawn dashed, partly off screen). */
+    trueFrame: ScreenRect? = null,
+    /** The phone's angle of view is assumed (not reported): frame line dashed to show it is approximate. */
+    approximate: Boolean = false,
+    modifier: Modifier,
 ) {
+    val measurer = rememberTextMeasurer(cacheSize = 8)
     Canvas(modifier) {
         if (frame == null || frame.width <= 0) return@Canvas
-        val mask = Color(0xFF071533).copy(alpha = maskAlpha)
+        // A see-through black mask: the live picture stays visible outside the frame (no solid strips).
+        val mask = Color.Black.copy(alpha = maskAlpha)
         val fx = frame.x.toFloat(); val fy = frame.y.toFloat(); val fw = frame.width.toFloat(); val fh = frame.height.toFloat()
         drawRect(mask, Offset(0f, 0f), androidx.compose.ui.geometry.Size(size.width, fy))
         drawRect(mask, Offset(0f, fy + fh), androidx.compose.ui.geometry.Size(size.width, size.height - fy - fh))
         drawRect(mask, Offset(0f, fy), androidx.compose.ui.geometry.Size(fx, fh))
         drawRect(mask, Offset(fx + fw, fy), androidx.compose.ui.geometry.Size(size.width - fx - fw, fh))
         val clipped = lines != null && !lines.fits
-        drawRect(if (clipped) Color(0xFFFF9F0A) else Brand.frameLine, Offset(fx, fy), androidx.compose.ui.geometry.Size(fw, fh), style = Stroke(1.5.dp.toPx()))
+        val lineColour = if (clipped) Color(0xFFFF9F0A) else Brand.frameLine
+        // A dark edge under the frame line keeps it visible on bright scenes.
+        drawRect(Color.Black.copy(alpha = 0.55f), Offset(fx, fy), androidx.compose.ui.geometry.Size(fw, fh), style = Stroke(3.5.dp.toPx()))
+        drawRect(lineColour, Offset(fx, fy), androidx.compose.ui.geometry.Size(fw, fh),
+            style = Stroke(1.5.dp.toPx(), pathEffect = if (approximate) PathEffect.dashPathEffect(floatArrayOf(14f, 8f)) else null))
+        // Wider than the phone: the frame's true edges continue off screen (dashed), with how much is missing.
+        trueFrame?.let { t ->
+            drawRect(Color(0xFFFF9F0A).copy(alpha = 0.8f), Offset(t.x.toFloat(), t.y.toFloat()),
+                androidx.compose.ui.geometry.Size(t.width.toFloat(), t.height.toFloat()),
+                style = Stroke(1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f))))
+            val wider = lines?.let { Math.round((maxOf(it.widthFraction, it.heightFraction) - 1) * 100) } ?: 0
+            if (wider > 0) drawLabel(
+                measurer, "Frame ${wider}% wider than the phone sees",
+                Offset(fx + 6.dp.toPx(), fy + fh - 20.dp.toPx()),
+                TextStyle(color = Color(0xFFFFB347), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, background = Color(0x99000000)),
+            )
+        }
+        if (label.isNotEmpty()) drawLabel(
+            measurer, label, Offset(fx + 6.dp.toPx(), fy + 5.dp.toPx()),
+            TextStyle(color = Color.White.copy(alpha = 0.9f), fontSize = 11.sp, fontFamily = FontFamily.Monospace, background = Color(0x66000000)),
+        )
         val guide = Color.White.copy(alpha = 0.4f)
         if (thirds) for (i in 1..2) {
             drawLine(guide, Offset(fx + fw * i / 3, fy), Offset(fx + fw * i / 3, fy + fh), 1.dp.toPx())
@@ -1247,13 +1446,16 @@ private fun MonitorOverlay(
             drawRect(guide, Offset(s.x.toFloat(), s.y.toFloat()), androidx.compose.ui.geometry.Size(s.width.toFloat(), s.height.toFloat()),
                 style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f))))
         }
-        // Corner brackets, like a camera monitor's frame guide.
-        val b = 18.dp.toPx(); val sw = 3.dp.toPx(); val col = Color.White
-        listOf(Offset(fx, fy) to Offset(1f, 1f), Offset(fx + fw, fy) to Offset(-1f, 1f), Offset(fx, fy + fh) to Offset(1f, -1f), Offset(fx + fw, fy + fh) to Offset(-1f, -1f))
-            .forEach { (p, d) ->
-                drawLine(col, p, p + Offset(d.x * b, 0f), sw)
-                drawLine(col, p, p + Offset(0f, d.y * b), sw)
-            }
+        // Corner brackets on the frame's true corners (centred on the frame line, square ends so they meet exactly),
+        // with a dark outline so they show on any background.
+        val b = 18.dp.toPx(); val sw = 3.dp.toPx()
+        for ((col, width) in listOf(Color.Black.copy(alpha = 0.6f) to sw + 2.dp.toPx(), Color.White to sw)) {
+            listOf(Offset(fx, fy) to Offset(1f, 1f), Offset(fx + fw, fy) to Offset(-1f, 1f), Offset(fx, fy + fh) to Offset(1f, -1f), Offset(fx + fw, fy + fh) to Offset(-1f, -1f))
+                .forEach { (p, d) ->
+                    drawLine(col, p - Offset(d.x * width / 2, 0f), p + Offset(d.x * b, 0f), width)
+                    drawLine(col, p - Offset(0f, d.y * width / 2), p + Offset(0f, d.y * b), width)
+                }
+        }
         for (m in markers) {
             val p = Offset(fx + (m.x * fw).toFloat(), fy + (m.y * fh).toFloat())
             drawCircle(markerColor(m.type), 9.dp.toPx(), p)

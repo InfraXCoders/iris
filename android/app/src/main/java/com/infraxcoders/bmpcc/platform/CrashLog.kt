@@ -34,12 +34,12 @@ object CrashLog {
 
     fun clear() { file?.delete() }
 
-    fun share(context: Context, text: String) {
+    fun share(context: Context, text: String, subject: String = "BMPCC Control crash report", chooserTitle: String = "Send crash report") {
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "BMPCC Control crash report")
+            putExtra(Intent.EXTRA_SUBJECT, subject)
             putExtra(Intent.EXTRA_TEXT, text)
         }
-        context.startActivity(Intent.createChooser(send, "Send crash report").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        context.startActivity(Intent.createChooser(send, chooserTitle).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }

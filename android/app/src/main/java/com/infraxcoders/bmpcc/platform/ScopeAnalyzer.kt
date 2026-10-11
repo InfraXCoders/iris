@@ -117,18 +117,19 @@ class ScopeAnalyzer(private val main: Executor) : ImageAnalysis.Analyzer {
     fun clear() { result = null }
     fun clearPicture() { picture = null }
 
-    fun useCase(rotation: Int = Surface.ROTATION_0): ImageAnalysis {
+    /** The analysis stream; [physicalId] streams one physical lens of a multi-lens camera (as the preview does). */
+    fun useCase(rotation: Int = Surface.ROTATION_0, physicalId: String? = null): ImageAnalysis {
         val selector = ResolutionSelector.Builder()
             .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
             .setResolutionStrategy(ResolutionStrategy(Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
             .build()
-        return ImageAnalysis.Builder()
+        val builder = ImageAnalysis.Builder()
             .setResolutionSelector(selector)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             .setTargetRotation(rotation)
-            .build()
-            .also { it.setAnalyzer(worker, this) }
+        PhysicalLens.apply(builder, physicalId)
+        return builder.build().also { it.setAnalyzer(worker, this) }
     }
 
     companion object {
