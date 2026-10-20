@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -54,6 +55,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.infraxcoders.bmpcc.core.Monitor
 import com.infraxcoders.bmpcc.core.Optics
 import com.infraxcoders.bmpcc.core.SkyProjection
+import com.infraxcoders.bmpcc.core.ScreenRect
 import com.infraxcoders.bmpcc.core.Solar
 import com.infraxcoders.bmpcc.core.SunPlan
 import com.infraxcoders.bmpcc.core.SkyPoint
@@ -196,7 +198,12 @@ fun SunArScreen(nav: Navigator, d: Dest.Sun) {
     Box(Modifier.fillMaxSize().background(Color.Black).onSizeChanged { screen = it }) {
         if (hasCamera) CameraPreview(context, lifecycleOwner, phone, rotation)
         val skyPoints = if (recording) recorded.entries.map { SkyPoint(it.key.toDouble(), it.value) } else d.skyline
-        SkyOverlay(pose, phone, landscape, screen, path, d.time, lat, lon, skyPoints)
+        if (screen.width > 0) SkyOverlay(
+            pose,
+            Monitor.aspectFill(if (landscape) phone.streamAspect else 1 / phone.streamAspect, screen.width.toDouble(), screen.height.toDouble()),
+            PhoneView.fromFormat(phone.longSideFov, phone.streamAspect, !landscape), phone.zoom,
+            path, d.time, lat, lon, skyPoints,
+        )
         if (recording) Text(
             "Sweep the crosshair slowly along the tops of buildings, trees and hills (${recorded.size}° recorded). Tap Done when you're round.",
             color = Color.White, fontSize = 13.sp,
@@ -217,6 +224,10 @@ fun SunArScreen(nav: Navigator, d: Dest.Sun) {
             Column(Modifier.weight(1f)) {
                 Text("Sun at ${clockText(d.time)}", color = Color(0xFFFFD27A), fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Text(sunText(sun), color = Color.White, fontSize = 12.sp)
+                if (sun.elevation > 0.5) Text(
+                    fmt("Shadows %.1f× height, towards %s", 1 / kotlin.math.tan(Math.toRadians(sun.elevation)), Solar.compass((sun.azimuth + 180) % 360)),
+                    color = Color(0xFFD5DDF0), fontSize = 12.sp,
+                )
             }
             AimText(pose)
         }
@@ -330,18 +341,20 @@ private fun spotText(r: SunPlan.SpotReport, az: Double, el: Double): String {
     return lines.joinToString("\n")
 }
 
-/** Day path, hour marks, sun disc and horizon compass points, projected with the live camera orientation. */
+/**
+ * Day path, hour marks, sun disc, shadows, horizon compass points and the skyline, projected with the live camera
+ * orientation onto the camera picture drawn at [video] (screen pixels), which sees [view] at zoom 1 and is at [zoom].
+ * Used by the sun camera view and by the viewfinder's Sun toggle.
+ */
 @Composable
-private fun SkyOverlay(
-    pose: State<CameraPose?>, phone: PhoneCamera, landscape: Boolean, screen: IntSize,
+internal fun SkyOverlay(
+    pose: State<CameraPose?>, video: ScreenRect, view: PhoneView, zoom: Double,
     path: List<SunPlan.Sample>, time: Long, lat: Double, lon: Double, skyline: List<SkyPoint> = emptyList(),
 ) {
-    if (screen.width == 0) return
+    if (video.width <= 0 || video.height <= 0) return
     val measurer = rememberTextMeasurer(cacheSize = 48)
-    val video = Monitor.aspectFill(if (landscape) phone.streamAspect else 1 / phone.streamAspect, screen.width.toDouble(), screen.height.toDouble())
-    val view = PhoneView.fromFormat(phone.longSideFov, phone.streamAspect, !landscape)
-    val th = Optics.halfTan(view.horizontalFov) / phone.zoom
-    val tv = Optics.halfTan(view.verticalFov) / phone.zoom
+    val th = Optics.halfTan(view.horizontalFov) / zoom.coerceAtLeast(0.1)
+    val tv = Optics.halfTan(view.verticalFov) / zoom.coerceAtLeast(0.1)
     val zone = ZoneId.systemDefault()
     Canvas(Modifier.fillMaxSize()) {
         // Read the pose while drawing, so sensor updates only redraw (no recomposition).
@@ -358,6 +371,22 @@ private fun SkyOverlay(
             if (!started) { horizon.moveTo(o.x, o.y); started = true } else horizon.lineTo(o.x, o.y)
         }
         drawPath(horizon, Color(0x88FFFFFF), style = Stroke(1.dp.toPx()))
+        // Shadows at the chosen time: the line along the ground they fall on (from just in front of the camera,
+        // 1.5 m up, out to the horizon).
+        val sunAt = Solar.position(time, lat, lon)
+        if (sunAt.elevation > 0.5) {
+            val shadowAz = (sunAt.azimuth + 180) % 360
+            val ground = listOf(2.0, 3.0, 4.0, 6.0, 9.0, 14.0, 22.0, 40.0, 80.0, 300.0)
+                .mapNotNull { dist -> scr(shadowAz, -Math.toDegrees(kotlin.math.atan(1.5 / dist))) }
+            if (ground.size > 1) {
+                val shadow = Path().apply { moveTo(ground[0].x, ground[0].y); ground.drop(1).forEach { lineTo(it.x, it.y) } }
+                drawPath(shadow, Color(0x99000000), style = Stroke(5.dp.toPx()))
+                drawPath(shadow, Color.White, style = Stroke(2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f))))
+                val end = ground.last()
+                drawLabel(measurer, "Shadows", Offset(end.x + 6.dp.toPx(), end.y - 18.dp.toPx()),
+                    TextStyle(color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold))
+            }
+        }
         for ((label, az) in listOf("N" to 0.0, "NE" to 45.0, "E" to 90.0, "SE" to 135.0, "S" to 180.0, "SW" to 225.0, "W" to 270.0, "NW" to 315.0)) {
             scr(az, 0.0)?.let { drawLabel(measurer, label, Offset(it.x - 6.dp.toPx(), it.y + 2.dp.toPx()), TextStyle(color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)) }
         }

@@ -36,6 +36,10 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.infraxcoders.bmpcc.core.RecceShot
+import com.infraxcoders.bmpcc.core.ReferenceCrop
+import com.infraxcoders.bmpcc.platform.ReferenceImages
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
 import com.infraxcoders.bmpcc.core.ShotReference
 import com.infraxcoders.bmpcc.data.LutStore
 import com.infraxcoders.bmpcc.data.RecceStore
@@ -80,28 +84,21 @@ fun CompareScreen(nav: Navigator, sessionId: String, sceneId: String) {
 @Composable
 private fun FrameCard(shot: RecceShot, ref: ShotReference, graded: Boolean, onClick: () -> Unit) {
     val lutId = if (graded) shot.lut else null
-    val bmp by produceState<Bitmap?>(null, ref.filePath, lutId, LutStore.version) {
-        value = withContext(Dispatchers.IO) {
-            val neutral = Images.load(File(RecceStore.referencesDir, ref.fileName), 1200)
-            if (neutral != null && lutId != null) LutStore.graded(neutral, lutId) ?: neutral else neutral
+    // The photo cut to the shot's frame for its current settings (dark where the phone couldn't see).
+    val crop = ReferenceCrop.forShot(ref, shot)
+    val bmp by produceState<Bitmap?>(null, ref.filePath, crop.frame, lutId, LutStore.version) {
+        value = withContext(Dispatchers.Default) {
+            val c = ReferenceImages.cropped(ref, shot, 1200)?.bitmap
+            if (c != null && lutId != null) LutStore.graded(c, lutId) ?: c else c
         }
     }
     Column(Modifier.clickable(onClick = onClick)) {
         val b = bmp
         if (b != null) {
-            // Crop to the saved frame lines (the whole photo when none were saved).
-            fun ok(v: Double?, d: Double) = v?.takeIf { !it.isNaN() } ?: d
-            val fx = ok(ref.frameX, 0.0).coerceIn(0.0, 0.99); val fy = ok(ref.frameY, 0.0).coerceIn(0.0, 0.99)
-            val fw = ok(ref.frameWidth, 1.0).coerceIn(0.01, 1.0 - fx); val fh = ok(ref.frameHeight, 1.0).coerceIn(0.01, 1.0 - fy)
-            val src = IntOffset((fx * b.width).roundToInt(), (fy * b.height).roundToInt())
-            val srcSize = IntSize(
-                (fw * b.width).roundToInt().coerceIn(1, (b.width - src.x).coerceAtLeast(1)),
-                (fh * b.height).roundToInt().coerceIn(1, (b.height - src.y).coerceAtLeast(1)),
+            Image(
+                b.asImageBitmap(), "Shot ${shot.shotNumber}", contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().aspectRatio(b.width.toFloat() / b.height).clip(RoundedCornerShape(6.dp)),
             )
-            val image = remember(b) { b.asImageBitmap() }
-            Canvas(Modifier.fillMaxWidth().aspectRatio(srcSize.width.toFloat() / srcSize.height).clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
-                drawImage(image, srcOffset = src, srcSize = srcSize, dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()))
-            }
         } else Box(Modifier.fillMaxWidth().aspectRatio(16f / 9).background(Color(0xFF22407F), RoundedCornerShape(6.dp)))
         Text("Shot ${shot.shotNumber} · ${shot.shotType.label}", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(top = 4.dp))

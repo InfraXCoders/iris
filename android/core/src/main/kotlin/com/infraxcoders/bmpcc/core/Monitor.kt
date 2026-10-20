@@ -122,11 +122,24 @@ object Monitor {
         Optics.fovFromHalfTan(Optics.halfTan(view.verticalFov) * area.height / video.height),
     )
 
-    data class Layout(val zoom: Double, val lines: FrameLines, val frame: ScreenRect)
+    /**
+     * Where to draw the cinema frame, and the phone zoom. [picture] is set when the frame is wider than the phone can
+     * see (Cadrage-style): the whole camera picture is then drawn smaller, centred inside the frame, at its true size
+     * relative to it; the rest of the frame is the part the phone can't see (drawn dark). null = the picture fills
+     * the screen as usual ([video]) and the frame is a mask over it.
+     */
+    data class Layout(val zoom: Double, val lines: FrameLines, val frame: ScreenRect, val picture: ScreenRect? = null) {
+        /** Share of the frame's width and height the phone picture covers (1 = all of it). */
+        val coverage: Pair<Double, Double> get() = picture?.let { p ->
+            min(p.width / frame.width, 1.0) to min(p.height / frame.height, 1.0)
+        } ?: (1.0 to 1.0)
+    }
 
     /**
      * Zoom the phone so the cinema frame fills [area] (with [margin]: 1.0 = edge to edge), then where to draw it.
      * [view] is the phone's view of the whole [video] at zoom 1. With [fixedZoom] the zoom is not changed.
+     * A frame wider than the phone sees keeps its shape, as large as [area] allows, with the camera picture drawn
+     * smaller inside it ([Layout.picture]) at the phone's widest zoom.
      */
     fun layout(
         reference: ReferenceFrame, view: PreviewView, video: ScreenRect, area: ScreenRect,
@@ -140,20 +153,33 @@ object Monitor {
         val scale = 1 / max(lines.widthFraction, lines.heightFraction)
         val fw = area.width * lines.widthFraction * scale
         val fh = area.height * lines.heightFraction * scale
-        return Layout(zoom, lines, ScreenRect(area.midX - fw / 2, area.midY - fh / 2, fw, fh))
+        val frame = ScreenRect(area.midX - fw / 2, area.midY - fh / 2, fw, fh)
+        // The camera picture at its true size inside the frame: on-screen length per unit of tan(half angle) is the
+        // same for both (rectilinear lenses), so picture / frame = tan(phone half angle) / tan(cinema half angle).
+        if (reference.tanHalfH <= 0 || reference.tanHalfV <= 0) return Layout(zoom, lines, frame)
+        val perTan = fw / (2 * reference.tanHalfH)
+        val pw = 2 * Optics.halfTan(view.horizontalFov) / zoom * perTan
+        val ph = 2 * Optics.halfTan(view.verticalFov) / zoom * perTan
+        return Layout(zoom, lines, frame, ScreenRect(frame.midX - pw / 2, frame.midY - ph / 2, pw, ph))
     }
 
     /** A centred area inset by [sideInset] left/right and [barInset] top/bottom. */
     fun centredArea(width: Double, height: Double, sideInset: Double, barInset: Double): ScreenRect =
         ScreenRect(sideInset, barInset, max(width - 2 * sideInset, 1.0), max(height - 2 * barInset, 1.0))
 
-    /** Frame position as fractions of the full camera picture (for saving with a reference photo). */
-    fun frameInPicture(frame: ScreenRect, video: ScreenRect): ScreenRect = ScreenRect(
-        ((frame.x - video.x) / video.width).coerceIn(0.0, 1.0),
-        ((frame.y - video.y) / video.height).coerceIn(0.0, 1.0),
-        min(frame.width / video.width, 1.0),
-        min(frame.height / video.height, 1.0),
-    )
+    /**
+     * Frame position as fractions of the full camera picture (for saving with a reference photo). A frame wider than
+     * the picture keeps its true size (x or y below 0, width or height above 1): the photo is then shown inside it
+     * with the part the phone couldn't see drawn dark ([ReferenceCanvas]).
+     */
+    fun frameInPicture(frame: ScreenRect, video: ScreenRect): ScreenRect {
+        if (video.width <= 0 || video.height <= 0) return ScreenRect(0.0, 0.0, 1.0, 1.0)
+        val x = (frame.x - video.x) / video.width; val y = (frame.y - video.y) / video.height
+        val w = frame.width / video.width; val h = frame.height / video.height
+        // Inside the picture: keep it inside (rounding). Wider: true size.
+        return if (w <= 1.0 + 1e-6 && h <= 1.0 + 1e-6) ScreenRect(x.coerceIn(0.0, 1.0), y.coerceIn(0.0, 1.0), min(w, 1.0), min(h, 1.0))
+        else ScreenRect(x, y, w, h)
+    }
 }
 
 /**
@@ -179,4 +205,37 @@ object Calibration {
     /** Signed difference in percent of the measured angle's tan(half) from the reported one (frame-line size error). */
     fun errorPercent(reportedFov: Double, measuredFov: Double): Double =
         (Optics.halfTan(reportedFov) / Optics.halfTan(measuredFov) - 1) * 100
+}
+
+/**
+ * Drawing a reference photo with its saved frame (fractions of the photo, see [Monitor.frameInPicture]): the canvas
+ * covers both the photo and the frame, so a frame wider than the phone could see shows the photo inside it with dark
+ * surroundings. All values are fractions of the canvas.
+ */
+data class ReferenceCanvas(
+    /** Canvas width / height in photo widths / heights. */
+    val widthInPhotos: Double, val heightInPhotos: Double,
+    /** Where the photo sits on the canvas (0..1). */
+    val photo: ScreenRect,
+    /** Where the frame sits on the canvas (0..1), or null when none was saved. */
+    val frame: ScreenRect?,
+) {
+    companion object {
+        fun of(frameX: Double?, frameY: Double?, frameWidth: Double?, frameHeight: Double?): ReferenceCanvas {
+            val ok = listOf(frameX, frameY, frameWidth, frameHeight).all { it != null && !it.isNaN() } && frameWidth!! > 0 && frameHeight!! > 0
+            if (!ok) return ReferenceCanvas(1.0, 1.0, ScreenRect(0.0, 0.0, 1.0, 1.0), null)
+            val fx = frameX!!; val fy = frameY!!; val fw = frameWidth!!; val fh = frameHeight!!
+            val l = min(0.0, fx); val t = min(0.0, fy); val r = max(1.0, fx + fw); val b = max(1.0, fy + fh)
+            val cw = r - l; val ch = b - t
+            return ReferenceCanvas(
+                cw, ch,
+                ScreenRect(-l / cw, -t / ch, 1 / cw, 1 / ch),
+                ScreenRect((fx - l) / cw, (fy - t) / ch, fw / cw, fh / ch),
+            )
+        }
+
+        /** Just the frame (for cropping to it): where the photo sits inside the frame (0..1 of the frame). */
+        fun photoInFrame(frameX: Double, frameY: Double, frameWidth: Double, frameHeight: Double): ScreenRect =
+            ScreenRect(-frameX / frameWidth, -frameY / frameHeight, 1 / frameWidth, 1 / frameHeight)
+    }
 }

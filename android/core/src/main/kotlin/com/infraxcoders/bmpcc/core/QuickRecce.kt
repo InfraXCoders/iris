@@ -50,7 +50,7 @@ object QuickRecce {
     /** "Pocket Cinema Camera 6K Pro" → "Pocket 6K Pro"; other cameras keep their model name. */
     fun shortName(camera: CameraProfile): String = camera.model.replace("Pocket Cinema Camera", "Pocket").trim()
 
-    val frames = listOf("16:9", "17:9", "2.39:1", "4:3")
+    val frames = listOf("16:9", "1.85:1", "2.39:1", "17:9", "4:3")
 
     /** The lens to use for a kind: [last] when it is that kind, otherwise a default. */
     fun lensFor(kind: LensKind, last: LensProfile?, all: List<LensProfile> = Catalog.lenses): LensProfile {

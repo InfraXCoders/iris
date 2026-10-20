@@ -157,6 +157,14 @@ data class ShotReference(
     val frameY: Double? = null,
     val frameWidth: Double? = null,
     val frameHeight: Double? = null,
+    /** The shot's settings when the photo was taken (the shot can be changed later). null in older recces. */
+    val cameraId: String? = null,
+    val sensorModeId: String? = null,
+    val lensId: String? = null,
+    val focalLength: String? = null,
+    val aspectRatio: String? = null,
+    /** The phone's angle of view was measured by the user (otherwise the frame lines are approximate). */
+    val calibrated: Boolean? = null,
 ) {
     val fileName: String get() = filePath.substringAfterLast('/')
 }
@@ -232,10 +240,15 @@ object RecceJson {
         "iso" to sh.iso, "nd" to sh.nd, "whiteBalance" to sh.whiteBalance, "cameraMovement" to sh.cameraMovement.name,
         "subjectMovement" to sh.subjectMovement, "estimatedDistance" to sh.estimatedDistance, "notes" to sh.notes,
         "references" to sh.references.sortedBy { it.timestamp }.map { r ->
-            linkedMapOf(
+            linkedMapOf<String, Any?>(
                 "id" to r.id, "shotId" to sh.id, "filePath" to r.filePath, "timestamp" to r.timestamp,
                 "frameX" to r.frameX, "frameY" to r.frameY, "frameWidth" to r.frameWidth, "frameHeight" to r.frameHeight,
-            )
+            ).apply {
+                // Optional (newer); left out when unknown so older readers see the same file as before.
+                r.cameraId?.let { put("cameraId", it) }; r.sensorModeId?.let { put("sensorModeId", it) }
+                r.lensId?.let { put("lensId", it) }; r.focalLength?.let { put("focalLength", it) }
+                r.aspectRatio?.let { put("aspectRatio", it) }; r.calibrated?.let { put("calibrated", it) }
+            }
         },
         "analysis" to null,
         "markers" to sh.markers.map { m ->
@@ -294,6 +307,9 @@ object RecceJson {
                     id = r.str("id").ifEmpty { newId() }, shotId = id, filePath = r.str("filePath").substringAfterLast('/'),
                     timestamp = r.long("timestamp"), frameX = r.dblOrNull("frameX"), frameY = r.dblOrNull("frameY"),
                     frameWidth = r.dblOrNull("frameWidth"), frameHeight = r.dblOrNull("frameHeight"),
+                    cameraId = r.strOrNull("cameraId"), sensorModeId = r.strOrNull("sensorModeId"), lensId = r.strOrNull("lensId"),
+                    focalLength = r.strOrNull("focalLength"), aspectRatio = r.strOrNull("aspectRatio"),
+                    calibrated = r.m["calibrated"] as? Boolean,
                 )
             },
             markers = o.objs("markers").map { m ->

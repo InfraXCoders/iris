@@ -169,8 +169,15 @@ import kotlin.math.asin
 import kotlin.math.atan
 import kotlin.math.atan2
 import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlin.math.min
 import kotlin.math.sqrt
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.runtime.derivedStateOf
+import com.infraxcoders.bmpcc.platform.Locator
+import com.infraxcoders.bmpcc.core.SunPlan
+import com.infraxcoders.bmpcc.core.Solar
 import com.infraxcoders.bmpcc.core.PreviewView as PhoneView
 
 /** The phone's back camera: its field of view, zoom range and controls. */
@@ -396,6 +403,25 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     var exposureSheet by remember { mutableStateOf(false) }
     var notes by remember { mutableStateOf(false) }
     var guidesMenu by remember { mutableStateOf(false) }
+    // Sun toggle: the sun's path, position and shadows over the live picture, for a chosen time.
+    val session = sessions.firstOrNull { it.id == sessionId }
+    var sunOn by remember { mutableStateOf(false) }
+    var sunTime by remember(shotId) { mutableStateOf(shot.plannedTime ?: System.currentTimeMillis()) }
+    var sunFix by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var sunStatus by remember { mutableStateOf<String?>(null) }
+    val sunAsker = rememberPermissionAsker { sunStatus = "Location access is off. Allow it to place the sun (it depends on where you are)." }
+    fun toggleSun() {
+        if (sunOn) { sunOn = false; return }
+        sunOn = true
+        if (session?.latitude != null && session?.longitude != null || sunFix != null) return
+        sunStatus = "Finding your location…"
+        sunAsker.withPermission(Manifest.permission.ACCESS_FINE_LOCATION) {
+            Locator.request(context) { loc, err ->
+                if (loc != null) { sunFix = loc.latitude to loc.longitude; sunStatus = null }
+                else sunStatus = err ?: "Couldn't find your location."
+            }
+        }
+    }
     var aspectMenu by remember { mutableStateOf(false) }
     val rotation = rememberDisplayRotation()
     val landscape = rotation == 90 || rotation == 270
@@ -455,6 +481,10 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     val useFullScreen = inControls != null && !inControls.lines.fits
     val area = if (useFullScreen) fullArea else controlArea
     val layout = if (useFullScreen) layoutWith(phone.longSideFov, phone.minZoom, phone.maxZoom, fixedZoom, fullArea) else inControls
+    // Where the camera picture is drawn: the whole screen, or (frame wider than the phone sees, Cadrage-style) smaller
+    // and centred inside the frame, the rest of the frame dark. Everything placed on the picture uses [shown].
+    val picture = layout?.picture
+    val shown = picture ?: video
 
     // The lens data drives the phone: zoom, exposure, white balance.
     LaunchedEffect(layout?.zoom, phone.camera, locked) { if (!locked) layout?.let { phone.applyZoom(it.zoom) } }
@@ -509,10 +539,10 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         )
         val scopeKind = Settings.scope
         val scopes = remember { ScopeAnalyzer(ContextCompat.getMainExecutor(context)) }
-        val scopeCrop = Scopes.crop(layout?.frame, video)
+        val scopeCrop = Scopes.crop(layout?.frame, shown)
         // Phones without GPU picture tools (Android 12 and older, or a shader failure): a lower-resolution CPU picture.
         val cpuPicture = hasCamera && (lut != null || tools.any) && !(PictureEffect.supported && PictureEffect.working)
-        val splitFraction = if (lutCompare && lut != null && video.width > 0) (lutSplit * w - video.x) / video.width else 0.0
+        val splitFraction = if (lutCompare && lut != null && shown.width > 0) (lutSplit * w - shown.x) / shown.width else 0.0
         SideEffect {
             scopes.kind = scopeKind; scopes.lut = lut; scopes.input = lutInput; scopes.crop = scopeCrop
             scopes.pictureOn = cpuPicture; scopes.tools = tools; scopes.splitFraction = splitFraction
@@ -520,22 +550,20 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         LaunchedEffect(cpuPicture) { if (!cpuPicture) scopes.clearPicture() }
         LaunchedEffect(scopeKind) { scopes.clear() }
         if (hasCamera) CameraPreview(
-            context, lifecycleOwner, phone, rotation, lut, lutInput, if (lutCompare && lut != null) lutSplit * w.toFloat() else null,
-            tools, scopes, scopeKind, cpuPicture, lens = chosenLens,
+            context, lifecycleOwner, phone, rotation, lut, lutInput,
+            if (lutCompare && lut != null) (lutSplit * w - (picture?.x ?: 0.0)).toFloat() else null,
+            tools, scopes, scopeKind, cpuPicture, lens = chosenLens, pictureRect = picture,
         )
-        if (cpuPicture) CpuPicture(scopes, video)
-        // Label in the frame's corner, and (when the frame is wider than the phone shows) its true size beyond the screen.
-        val frameLabel = listOfNotNull(
+        if (cpuPicture) CpuPicture(scopes, shown)
+        // Label in the frame's corner.
+        // "≈" until the phone is calibrated: the frame lines are approximate.
+        val frameLabel = (if (phone.fovSource.calibrated) "" else "≈ ") + listOfNotNull(
             shot.focalLength.ifBlank { null }, shot.aspectRatio, reference?.let { "${Math.round(it.deliveredFov.horizontal)}°" },
         ).joinToString(" · ")
-        val trueFrame = layout?.takeIf { !it.lines.fits }?.let { l ->
-            val tw = area.width * l.lines.widthFraction; val th = area.height * l.lines.heightFraction
-            ScreenRect(area.midX - tw / 2, area.midY - th / 2, tw, th)
-        }
         MonitorOverlay(
             layout?.frame, layout?.lines, shot.markers, showThirds, showCentre, showSafe,
             maskAlpha = if (surroundings) 0.3f else 0.55f,
-            label = frameLabel, trueFrame = trueFrame, approximate = phone.fovSource == PhoneOptics.Source.ASSUMED,
+            label = frameLabel, approximate = phone.fovSource == PhoneOptics.Source.ASSUMED,
             modifier = Modifier.fillMaxSize().pointerInput(markerType, layout?.frame) {
                 detectTapGestures { p ->
                     val t = markerType ?: return@detectTapGestures
@@ -550,20 +578,48 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         // Compare: the other focal lengths of the set as labelled frame lines around / inside the current frame.
         // Lens distortion (Lensfun profile): where the frame edges really fall for this photo lens.
         val distortionModel = remember(lens.id, shot.focalMm, Settings.distortionVersion) { Distortion.modelFor(lens, shot.focalMm) }
-        if (showDistortion && distortionModel != null && layout != null && layout.lines.fits && reference != null &&
+        if (showDistortion && distortionModel != null && layout != null && (layout.lines.fits || picture != null) && reference != null &&
             Distortion.withinCalibration(lens, reference.deliveredWidthMm, reference.deliveredHeightMm)
         ) {
             val pts = Distortion.frameOutline(distortionModel, reference.deliveredWidthMm, reference.deliveredHeightMm, reference.effectiveFocalLengthMm)
             DistortionOverlay(pts, layout.frame, reference.tanHalfH, reference.tanHalfV)
         }
-        if (compare && layout != null) {
+        if (compare && layout != null && reference != null) {
             val zoomed = Monitor.viewAcross(view, video, area).zoomed(layout.zoom)
             val others = compareFocals(focals, shot.focalMm).mapNotNull { f ->
                 val ref = Framing.reference(shot.camera, FocalOptions.lensFor(lens, f), f, shot.aspectValue) ?: return@mapNotNull null
-                val lines = Viewfinder.frameLines(ref, zoomed)
-                if (lines.fits) f to Viewfinder.frameRect(lines, area) else null
+                if (picture != null) {
+                    // Picture drawn inside a wide frame: the other frames scale with the current one, if they fit the screen.
+                    val k = layout.frame.width / (2 * reference.tanHalfH)
+                    val fw = 2 * ref.tanHalfH * k; val fh = 2 * ref.tanHalfV * k
+                    if (fw <= w && fh <= h) f to ScreenRect(layout.frame.midX - fw / 2, layout.frame.midY - fh / 2, fw, fh) else null
+                } else {
+                    val lines = Viewfinder.frameLines(ref, zoomed)
+                    if (lines.fits) f to Viewfinder.frameRect(lines, area) else null
+                }
             }
             CompareOverlay(others)
+        }
+
+        // Sun toggle: path, hour marks, sun and shadows on the camera picture (where it's drawn: [shown]).
+        val sunLat = session?.latitude ?: sunFix?.first
+        val sunLon = session?.longitude ?: sunFix?.second
+        if (sunOn) {
+            val known = sunLat != null && sunLon != null
+            val pose = if (known && hasCamera) rememberCameraPose(rotation, sunLat!!, sunLon!!, CompassCorrection.offset) else null
+            val compass = if (known && hasCamera) rememberCompassStatus() else null
+            if (pose != null && sunLat != null && sunLon != null) {
+                val zone = java.time.ZoneId.systemDefault()
+                val dayStart = SunPlan.dayBounds(sunTime, zone).first
+                val path = remember(sunLat, sunLon, dayStart) { SunPlan.path(sunTime, sunLat, sunLon, zone, 10) }
+                SkyOverlay(pose, shown, view, phone.zoom, path, sunTime, sunLat, sunLon, session?.skyline ?: emptyList())
+            }
+            SunStrip(
+                sunTime, sunLat, sunLon, if (known) null else sunStatus, pose, compass,
+                if (landscape) Modifier.align(Alignment.BottomCenter).padding(start = 70.dp, end = 100.dp, bottom = 56.dp)
+                else Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = 60.dp, end = 60.dp, bottom = 236.dp),
+                onTime = { sunTime = it }, onClose = { sunOn = false },
+            )
         }
 
         if (scopeKind != ScopeKind.NONE && hasCamera && Settings.showScope) ScopePanel(
@@ -611,9 +667,17 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         val statusNotes = buildList {
             if (!hasCamera) add(StatusNote("Camera access off", "Camera access is off. Allow it in the phone's settings to use the viewfinder.", true))
             else phone.error?.let { add(StatusNote("Camera error", it, true)) }
-            if (layout != null && !layout.lines.fits) add(StatusNote(
-                "Wider than the phone", "Wider than every lens on this phone can see: the frame shows the phone's widest view.", true,
-            ))
+            if (picture != null && layout != null) {
+                val (cw, ch) = layout.coverage
+                // Information only: the frame is drawn at its true size and the camera picture inside it.
+                if (cw < 0.999 || ch < 0.999) add(StatusNote(
+                    "Wider than the phone",
+                    fmt("This frame is wider than the phone's lens: the camera picture is shown inside it (%.0f%% of its width, %.0f%% of its height). The dark area is what the phone can't see.", cw * 100, ch * 100) +
+                        // The zoom lock keeps the lens: say when a wider one (the ultra-wide) would show more.
+                        if (locked && usableLenses.any { it.widestFov > (chosenLens?.widestFov ?: 0.0) + 1 }) " Unlock the zoom to switch to the wider lens." else "",
+                    false,
+                ))
+            }
             if (ShotOptics.depthOfField(shot)?.tooClose == true) add(StatusNote(
                 "Too close to focus", fmt("Closer than this lens can focus (%.2f m).", lens.minimumFocusDistance), true,
             ))
@@ -634,11 +698,8 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
             phone.zoom < 0.99 -> fmt("Wide %.1f×", phone.zoom)
             else -> "Main lens"
         }
-        val calibrationLabel = when (phone.fovSource) {
-            PhoneOptics.Source.MANUAL -> "Calibrated"
-            PhoneOptics.Source.INTRINSIC, PhoneOptics.Source.SENSOR -> "Auto-calibrated"
-            PhoneOptics.Source.ASSUMED -> "FOV assumed 70°"
-        }
+        // Framing is approximate unless the user measured the phone's angle (Calibrate).
+        val calibrationLabel = phone.fovSource.short
         Column(
             if (landscape) Modifier.align(Alignment.TopEnd).padding(top = 52.dp, end = 80.dp).widthIn(max = 300.dp)
             else Modifier.align(Alignment.TopCenter).padding(top = 96.dp, start = 24.dp, end = 24.dp),
@@ -669,6 +730,7 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         val toolButtons: @Composable () -> Unit = {
             RoundButton("Grid", selected = showThirds, size = 42.dp) { showThirds = !showThirds }
             RoundButton("Level", selected = showLevel, size = 42.dp) { showLevel = !showLevel }
+            RoundButton("Sun", selected = sunOn, size = 42.dp) { toggleSun() }
             Box {
                 RoundButton("Guides", selected = showCentre || showSafe || surroundings || locked || markerType != null, size = 42.dp) { guidesMenu = true }
                 DropdownMenu(guidesMenu, { guidesMenu = false }) {
@@ -765,9 +827,9 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
         val shutter: @Composable () -> Unit = {
             Box(
                 Modifier.size(70.dp).border(3.dp, Color.White, CircleShape).padding(6.dp).background(Color.White, CircleShape)
-                    .pointerInput(layout?.frame, video, shot.shotNumber) {
+                    .pointerInput(layout?.frame, shown, shot.shotNumber) {
                         detectTapGestures {
-                            takeReference(context, phone, layout?.frame, video) { ref, err ->
+                            takeReference(context, phone, layout?.frame, shown, shot) { ref, err ->
                                 if (ref != null) {
                                     edit { s -> s.copy(references = s.references + ref.copy(shotId = shotId)) }
                                     flash = "Frame saved to shot ${shot.shotNumber}"
@@ -781,7 +843,10 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
 
         if (landscape) {
             // ── Landscape: tools left, photo / capture / setup right, W M C and focal lengths along the bottom ──
-            Column(Modifier.align(Alignment.CenterStart).padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { toolButtons() }
+            Column(
+                Modifier.align(Alignment.CenterStart).padding(start = 14.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) { toolButtons() }
             Column(
                 Modifier.align(Alignment.CenterEnd).padding(end = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
@@ -1102,6 +1167,11 @@ internal fun CameraPreview(
     pictureOn: Boolean = false,
     /** The phone lens to use (null = the default back camera, without lens switching). */
     lens: PhoneOptics.Lens? = null,
+    /**
+     * Where to draw the whole camera picture (screen pixels), when it is drawn smaller inside a frame wider than the
+     * phone sees. null = fill the screen (cropping the picture's overflow).
+     */
+    pictureRect: ScreenRect? = null,
 ) {
     val previewView = remember {
         PreviewView(context).apply {
@@ -1194,7 +1264,15 @@ internal fun CameraPreview(
         }, ContextCompat.getMainExecutor(context))
         onDispose { disposed = true; stateObserver?.invoke(); provider?.unbindAll(); phone.camera = null }
     }
-    AndroidView({ previewView }, Modifier.fillMaxSize(), update = { v ->
+    val density = LocalDensity.current
+    val placement = if (pictureRect == null) Modifier.fillMaxSize() else with(density) {
+        Modifier.offset { IntOffset(pictureRect.x.roundToInt(), pictureRect.y.roundToInt()) }
+            .size(pictureRect.width.toFloat().toDp(), pictureRect.height.toFloat().toDp())
+    }
+    AndroidView({ previewView }, placement, update = { v ->
+        // Inside a wide frame the view has the picture's own shape: show all of it.
+        val type = if (pictureRect == null) PreviewView.ScaleType.FILL_CENTER else PreviewView.ScaleType.FIT_CENTER
+        if (v.scaleType != type) v.scaleType = type
         PictureEffect.apply(v, lut, lutInput, splitPx ?: -1f, tools)
     })
 }
@@ -1409,8 +1487,7 @@ private fun MonitorOverlay(
         drawRect(mask, Offset(0f, fy + fh), androidx.compose.ui.geometry.Size(size.width, size.height - fy - fh))
         drawRect(mask, Offset(0f, fy), androidx.compose.ui.geometry.Size(fx, fh))
         drawRect(mask, Offset(fx + fw, fy), androidx.compose.ui.geometry.Size(size.width - fx - fw, fh))
-        val clipped = lines != null && !lines.fits
-        val lineColour = if (clipped) Color(0xFFFF9F0A) else Brand.frameLine
+        val lineColour = if (trueFrame != null) Color(0xFFFF9F0A) else Brand.frameLine
         // A dark edge under the frame line keeps it visible on bright scenes.
         drawRect(Color.Black.copy(alpha = 0.55f), Offset(fx, fy), androidx.compose.ui.geometry.Size(fw, fh), style = Stroke(3.5.dp.toPx()))
         drawRect(lineColour, Offset(fx, fy), androidx.compose.ui.geometry.Size(fw, fh),
@@ -1473,11 +1550,55 @@ fun markerColor(t: MarkerType): Color = when (t) {
     MarkerType.WINDOW -> Color(0xFF64D2FF)
 }
 
+/**
+ * The Sun toggle's strip: the time (slider over the day), where the sun is, where shadows fall, and what's missing
+ * (location, rotation sensor, compass calibration).
+ */
+@Composable
+private fun SunStrip(
+    time: Long, lat: Double?, lon: Double?, status: String?, pose: State<CameraPose?>?, compass: State<Int?>?,
+    modifier: Modifier, onTime: (Long) -> Unit, onClose: () -> Unit,
+) {
+    val hasPose by remember(pose) { derivedStateOf { pose?.value != null } }
+    val poorCompass = compass?.value.let { it == SensorManager.SENSOR_STATUS_UNRELIABLE || it == SensorManager.SENSOR_STATUS_ACCURACY_LOW }
+    Column(modifier.widthIn(max = 460.dp).background(Color(0xD90B1E45), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val line = if (lat != null && lon != null) {
+                val p = Solar.position(time, lat, lon)
+                "Sun ${clockText(time)} · " + sunText(p) +
+                    if (p.elevation > 0.5) fmt(" · shadows %.1f× towards %s", 1 / kotlin.math.tan(Math.toRadians(p.elevation)), Solar.compass((p.azimuth + 180) % 360)) else ""
+            } else status ?: "Finding your location…"
+            Text(line, color = Color(0xFFFFD27A), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, modifier = Modifier.weight(1f))
+            Text("✕", color = Color.White, fontSize = 16.sp, modifier = Modifier.clickable(onClick = onClose).padding(start = 10.dp, top = 2.dp, bottom = 2.dp))
+        }
+        if (lat != null && lon != null) {
+            val zone = java.time.ZoneId.systemDefault()
+            val (start, end) = SunPlan.dayBounds(time, zone)
+            val last = ((end - start) / 60_000 - 1).toFloat()
+            Slider(
+                ((time - start) / 60_000).toFloat().coerceIn(0f, last), { onTime(start + it.toLong() * 60_000) }, valueRange = 0f..last,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFFFFD27A), activeTrackColor = Color(0xFFFFB347)),
+            )
+            val note = when {
+                !hasPose -> "Waiting for the rotation sensor (some phones have none: then the sun can't be placed on the picture)."
+                poorCompass -> "Compass needs calibrating: move the phone in a figure-8 a few times, away from metal and cars."
+                else -> "Approximate (phone compass). If it's off from the real sun, correct it in Sun planner › camera view › Align on the sun."
+            }
+            Text(note, color = if (poorCompass) Color(0xFFFFB347) else Color(0xFFD5DDF0), fontSize = 10.sp, maxLines = 2)
+        }
+    }
+}
+
 /** Captures a photo of the whole camera picture and remembers where the cinema frame was in it. */
 private fun takeReference(
-    context: Context, phone: PhoneCamera, frame: ScreenRect?, video: ScreenRect,
+    context: Context, phone: PhoneCamera, frame: ScreenRect?, video: ScreenRect, shot: RecceShot,
     done: (ShotReference?, String?) -> Unit,
 ) {
+    // The shot's settings now, kept with the photo (the shot can be changed later), and whether the framing was calibrated.
+    val settings = ShotReference(
+        filePath = "", cameraId = shot.baseCamera.id, sensorModeId = shot.sensorMode.id, lensId = shot.lens.id,
+        focalLength = shot.focalLength, aspectRatio = shot.aspectRatio, calibrated = phone.fovSource.calibrated,
+    )
     val capture = phone.capture ?: return done(null, "The camera isn't ready.")
     capture.targetRotation = displayRotation(context)
     val file = RecceStore.newReferenceFile()
@@ -1488,8 +1609,8 @@ private fun takeReference(
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                 val ref = if (frame != null && video.width > 0 && video.height > 0) {
                     val f = Monitor.frameInPicture(frame, video)
-                    ShotReference(filePath = file.name, frameX = f.x, frameY = f.y, frameWidth = f.width, frameHeight = f.height)
-                } else ShotReference(filePath = file.name)
+                    settings.copy(filePath = file.name, timestamp = System.currentTimeMillis(), frameX = f.x, frameY = f.y, frameWidth = f.width, frameHeight = f.height)
+                } else settings.copy(filePath = file.name, timestamp = System.currentTimeMillis())
                 done(ref, null)
             }
             override fun onError(e: ImageCaptureException) { file.delete(); done(null, "Couldn't save the photo: ${e.message}") }

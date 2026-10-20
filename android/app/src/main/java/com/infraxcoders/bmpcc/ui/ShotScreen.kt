@@ -4,6 +4,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CenterFocusStrong
@@ -40,6 +42,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.background
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import com.infraxcoders.bmpcc.core.ReferenceCanvas
+import com.infraxcoders.bmpcc.core.ReferenceCrop
+import com.infraxcoders.bmpcc.platform.ReferenceImages
+import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.KeyboardType
@@ -150,7 +159,7 @@ fun ShotScreen(nav: Navigator, sessionId: String, sceneId: String, shotId: Strin
                 val refs = shot.references.sortedBy { it.timestamp }
                 if (refs.isEmpty()) item { Hint("Capture frames from the viewfinder; they're saved here with the frame lines.") }
                 items(refs, key = { it.id }) { r ->
-                    ReferencePhoto(r, shot.lut) {
+                    ReferencePhoto(r, shot, shot.lut) {
                         File(RecceStore.referencesDir, r.fileName).delete()
                         edit { s -> s.copy(references = s.references.filter { it.id != r.id }) }
                     }
@@ -226,35 +235,82 @@ private fun FramingRows(shot: RecceShot, nav: Navigator) {
     if (shot.lens.minimumFocusDistance > 0) LabeledRow("Minimum focus", fmt("%.2f m", shot.lens.minimumFocusDistance))
 }
 
-/** A reference photo with its frame lines drawn on it. */
+/**
+ * A reference photo for the shot's current settings: by default cut to the cinema frame (what the selected camera,
+ * lens and aspect ratio would show; dark where the phone couldn't see), or the whole photo with the frame drawn on it.
+ * Follows the shot when its camera, lens, focal length or aspect ratio change.
+ */
 @Composable
-fun ReferencePhoto(r: ShotReference, lutId: String? = null, onDelete: (() -> Unit)? = null) {
-    val neutral = Images.load(File(RecceStore.referencesDir, r.fileName))
+fun ReferencePhoto(r: ShotReference, shot: RecceShot, lutId: String? = null, onDelete: (() -> Unit)? = null) {
+    val crop = ReferenceCrop.forShot(r, shot)
+    var showCrop by remember { mutableStateOf(true) }
     var showGraded by remember(lutId) { mutableStateOf(lutId != null) }
-    val graded by produceState<android.graphics.Bitmap?>(null, r.filePath, lutId, LutStore.version) {
-        value = if (lutId == null || neutral == null) null else withContext(Dispatchers.Default) { LutStore.graded(neutral, lutId) }
+    val gradeWith = if (showGraded) lutId else null
+    val neutral = Images.load(File(RecceStore.referencesDir, r.fileName))
+    // The crop (and its graded version) in the background; the photo file is read once and cached.
+    val cropped by produceState<android.graphics.Bitmap?>(null, r.filePath, crop.frame, gradeWith, LutStore.version) {
+        value = withContext(Dispatchers.Default) {
+            val c = ReferenceImages.cropped(r, shot, 1600)?.bitmap
+            if (c != null && gradeWith != null) LutStore.graded(c, gradeWith) ?: c else c
+        }
     }
-    val bmp = if (showGraded && graded != null) graded else neutral
-    if (lutId != null && neutral != null) Row(Modifier.cardRow().padding(start = 12.dp, top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        ChoiceChip("Neutral", !showGraded) { showGraded = false }
-        ChoiceChip(LutStore.nameOf(lutId) ?: "Graded", showGraded) { showGraded = true }
+    val gradedFull by produceState<android.graphics.Bitmap?>(null, r.filePath, gradeWith, showCrop, LutStore.version) {
+        value = if (showCrop || gradeWith == null || neutral == null) null else withContext(Dispatchers.Default) { LutStore.graded(neutral, gradeWith) }
+    }
+    if (neutral != null) Row(Modifier.cardRow().horizontalScroll(rememberScrollState()).padding(start = 12.dp, top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        ChoiceChip("Frame", showCrop) { showCrop = true }
+        ChoiceChip("Full photo", !showCrop) { showCrop = false }
+        if (lutId != null) {
+            Spacer(Modifier.width(8.dp))
+            ChoiceChip("Neutral", !showGraded) { showGraded = false }
+            ChoiceChip(LutStore.nameOf(lutId) ?: "Graded", showGraded) { showGraded = true }
+        }
     }
     Column(Modifier.cardRow().padding(horizontal = 12.dp, vertical = 8.dp)) {
-        if (bmp != null) {
-            Box(Modifier.fillMaxWidth().aspectRatio(bmp.width.toFloat() / bmp.height).clip(RoundedCornerShape(6.dp))) {
-                Image(bmp.asImageBitmap(), null, contentScale = ContentScale.Fit, modifier = Modifier.matchParentSize())
-                val x = r.frameX; val y = r.frameY; val w = r.frameWidth; val h = r.frameHeight
-                if (x != null && y != null && w != null && h != null) {
-                    Canvas(Modifier.matchParentSize()) {
-                        drawRect(Brand.frameLine, Offset((x * size.width).toFloat(), (y * size.height).toFloat()),
-                            Size((w * size.width).toFloat(), (h * size.height).toFloat()), style = Stroke(2.dp.toPx()))
+        if (neutral == null) {
+            Text("Photo not on this phone (${r.fileName})", color = Color.Gray)
+        } else if (showCrop) {
+            // The frame itself, at its own shape (the shape is known before the picture is ready).
+            val aspect = crop.aspect(neutral.width, neutral.height).toFloat().coerceIn(0.2f, 6f)
+            Box(Modifier.fillMaxWidth().aspectRatio(aspect).clip(RoundedCornerShape(6.dp)).background(Color(ReferenceImages.PADDING))) {
+                cropped?.let { Image(it.asImageBitmap(), "Reference photo, cut to the frame", contentScale = ContentScale.Fit, modifier = Modifier.matchParentSize()) }
+            }
+        } else {
+            // The whole photo with the frame drawn on it; a frame wider than the photo shows it inside, dark around.
+            val bmp = gradedFull ?: neutral
+            val c = ReferenceCanvas.of(crop.frame.x, crop.frame.y, crop.frame.width, crop.frame.height)
+            val image = remember(bmp) { bmp.asImageBitmap() }
+            Box(
+                Modifier.fillMaxWidth().aspectRatio((bmp.width * c.widthInPhotos / (bmp.height * c.heightInPhotos)).toFloat())
+                    .clip(RoundedCornerShape(6.dp)).background(Color(ReferenceImages.PADDING)),
+            ) {
+                Canvas(Modifier.matchParentSize()) {
+                    drawImage(
+                        image,
+                        dstOffset = IntOffset((c.photo.x * size.width).roundToInt(), (c.photo.y * size.height).roundToInt()),
+                        dstSize = IntSize((c.photo.width * size.width).roundToInt(), (c.photo.height * size.height).roundToInt()),
+                    )
+                    if (crop.basis != ReferenceCrop.Basis.NO_FRAME) c.frame?.let { f ->
+                        drawRect(Brand.frameLine, Offset((f.x * size.width).toFloat(), (f.y * size.height).toFloat()),
+                            Size((f.width * size.width).toFloat(), (f.height * size.height).toFloat()), style = Stroke(2.dp.toPx()))
                     }
                 }
             }
-        } else Text("Photo not on this phone (${r.fileName})", color = Color.Gray)
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(r.timestamp)),
-                style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(1f))
+            // When it was taken, with the shot's settings then, how exact the frame is, and where this crop comes from.
+            val taken = listOfNotNull(
+                DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(r.timestamp)),
+                listOfNotNull(r.cameraId?.let { com.infraxcoders.bmpcc.core.Catalog.camera(it)?.model }, r.focalLength, r.aspectRatio)
+                    .joinToString(" · ").ifEmpty { null },
+                when (r.calibrated) {
+                    true -> "calibrated frame"
+                    false -> "approximate frame"
+                    null -> null
+                },
+                ReferenceImages.basisText(r, shot, crop),
+            ).joinToString("\n")
+            Text(taken, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.weight(1f))
             if (onDelete != null) IconButton(onDelete) { Icon(Icons.Filled.Delete, "Delete photo", tint = Color.Gray) }
         }
     }

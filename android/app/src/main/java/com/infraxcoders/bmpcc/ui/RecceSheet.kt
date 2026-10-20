@@ -228,39 +228,19 @@ fun RecceSheet(
     }
 }
 
-/** Recce mode entry: the New recce sheet over the live camera picture; "Open viewfinder" creates the shot. */
+/**
+ * Recce mode entry, Cadrage-style: straight into the live viewfinder with the last camera, recording mode, lens,
+ * focal length and frame. They're changed on the live picture (camera pill / Setup, focal chips, frame).
+ */
 @Composable
 fun RecceStartScreen(nav: Navigator) {
-    FullScreen()
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val phone = remember { PhoneCamera() }
-    var hasCamera by remember { mutableStateOf(context.hasPermission(Manifest.permission.CAMERA)) }
-    val asker = rememberPermissionAsker { }
-    LaunchedEffect(Unit) { if (!hasCamera) asker.withPermission(Manifest.permission.CAMERA) { hasCamera = true } }
-    val initial = remember { RecceChoice.last() }
-    val rotation = rememberDisplayRotation()
-
-    Box(Modifier.fillMaxSize().background(Brand.background)) {
-        if (hasCamera) CameraPreview(context, lifecycleOwner, phone, rotation)
-        Box(Modifier.fillMaxSize().background(Color(0xB30B1E45)))
-        // A glimpse of the viewfinder's top bar behind the sheet.
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 22.dp), verticalAlignment = Alignment.CenterVertically) {
-            Pill(QuickRecce.shortName(initial.camera), color = Color(0x55FFFFFF), textColor = Color.White)
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(ShotPresets.focalText(initial.focal), color = Color(0x99C9D8FF), fontSize = 30.sp, fontFamily = FontFamily.Monospace)
-            }
-            Pill(initial.aspect, color = Color(0x55FFFFFF), textColor = Color.White)
-        }
-    }
-    RecceSheet(
-        title = "New recce", subtitle = "Takes 10 seconds. You can change it anytime from the viewfinder.",
-        button = "Open viewfinder", initial = initial, onDismiss = { nav.pop() },
-    ) { c ->
+    LaunchedEffect(Unit) {
+        val c = RecceChoice.last()
         val (s, sc, sh) = RecceStore.quickRecceShot(c.camera, c.lens, c.modeId)
         RecceStore.updateShot(s, sc, sh) { it.copy(focalLength = ShotPresets.focalText(c.focal), aspectRatio = c.aspect) }
         nav.replace(Dest.Finder(s, sc, sh))
     }
+    Box(Modifier.fillMaxSize().background(Color.Black))
 }
 
 @Composable

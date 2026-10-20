@@ -45,6 +45,8 @@ import com.infraxcoders.bmpcc.platform.Places
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.infraxcoders.bmpcc.platform.rememberPermissionAsker
 import com.infraxcoders.bmpcc.platform.share
 import com.infraxcoders.bmpcc.report.ReportPdf
@@ -60,6 +62,20 @@ fun SessionScreen(nav: Navigator, sessionId: String) {
     var locating by remember { mutableStateOf<String?>(null) }
     var showNote by remember { mutableStateOf(false) }
     var shareError by remember { mutableStateOf<String?>(null) }
+    var makingPdf by remember { mutableStateOf(false) }
+    val pdfScope = rememberCoroutineScope()
+    // The PDF crops every reference photo: made in the background, then shared.
+    fun makePdf(guides: Boolean) {
+        if (makingPdf) return
+        shareError = null
+        makingPdf = true
+        pdfScope.launch {
+            runCatching { withContext(Dispatchers.IO) { ReportPdf.make(context, RecceStore.session(sessionId)!!, frameGuides = guides) } }
+                .onSuccess { share(context, it, "application/pdf") }
+                .onFailure { shareError = it.message ?: "The report couldn't be created." }
+            makingPdf = false
+        }
+    }
     val asker = rememberPermissionAsker { locating = "Location access is off." }
     var placeSuggestion by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -162,11 +178,14 @@ fun SessionScreen(nav: Navigator, sessionId: String) {
             }
             section("Share") {
                 item {
-                    ActionRow(Icons.Filled.PictureAsPdf, "Create PDF report", "Summary, sun, one page per shot, sorted notes") {
-                        shareError = null
-                        runCatching { share(context, ReportPdf.make(context, RecceStore.session(sessionId)!!), "application/pdf") }
-                            .onFailure { shareError = it.message ?: "The report couldn't be created." }
-                    }
+                    ActionRow(
+                        Icons.Filled.PictureAsPdf, if (makingPdf) "Creating PDF…" else "Create PDF shot list",
+                        "Each shot's photo cut to its frame, settings and notes", enabled = !makingPdf,
+                    ) { makePdf(guides = false) }
+                    ActionRow(
+                        Icons.Filled.PictureAsPdf, "PDF with frame guides", "The same, with the frame edge and thirds drawn on each picture",
+                        enabled = !makingPdf,
+                    ) { makePdf(guides = true) }
                     ActionRow(Icons.Filled.Code, "Export JSON", "Opens in the iPhone app too") {
                         shareError = null
                         runCatching { share(context, RecceStore.exportJson(RecceStore.session(sessionId)!!), "application/json") }

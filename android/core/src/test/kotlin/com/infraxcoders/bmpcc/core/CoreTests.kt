@@ -370,6 +370,35 @@ class RecceJsonTest {
         assertEquals("Hinglish", again.voiceNotes[0].detectedLanguage)
     }
 
+    @Test fun referenceKeepsItsCaptureSettings() {
+        // Old files have no capture settings: they stay null, and the written file has no new keys.
+        val old = RecceJson.decode(androidJson)
+        val r0 = old.scenes[0].shots[0].references[0]
+        assertEquals(null, r0.focalLength); assertEquals(null, r0.calibrated)
+        assertTrue(!RecceJson.encode(old).contains("\"calibrated\""))
+        // New references keep the camera, mode, lens, focal length, frame and calibration from when they were taken.
+        val sh = old.scenes[0].shots[0]
+        val ref = r0.copy(cameraId = "sony_fx3", sensorModeId = "ff_4k", lensId = "generic_prime_18", focalLength = "18mm",
+            aspectRatio = "1.85:1", calibrated = false, frameX = -0.2, frameWidth = 1.4)
+        val s = old.copy(scenes = listOf(old.scenes[0].copy(shots = listOf(sh.copy(references = listOf(ref))))))
+        val again = RecceJson.decode(RecceJson.encode(s)).scenes[0].shots[0].references[0]
+        assertEquals(ref, again)
+    }
+
+    @Test fun framingAccuracyLabels() {
+        // Only the user's own measurement counts as calibrated; the phone's data is approximate.
+        assertTrue(PhoneOptics.Source.MANUAL.calibrated)
+        for (s in listOf(PhoneOptics.Source.INTRINSIC, PhoneOptics.Source.SENSOR, PhoneOptics.Source.ASSUMED)) {
+            assertTrue(!s.calibrated)
+            assertTrue(s.label.startsWith("Approximate"))
+            assertTrue(!s.label.contains("calibrated", ignoreCase = false) || s.label.contains("calibrate for"))
+        }
+        // The quick frame choices include the three common cinema frames.
+        for (f in listOf("16:9", "1.85:1", "2.39:1")) assertTrue(f in QuickRecce.frames)
+        // Focal length presets of the generic prime set.
+        for (f in listOf(18.0, 24.0, 35.0, 50.0, 85.0, 135.0)) assertTrue(f in QuickRecce.primeFocals)
+    }
+
     @Test fun jsonEscapes() {
         val v = mapOf("a" to "line\n\"quoted\" \\ é", "n" to listOf(1L, 2.5, null, true))
         assertEquals(v, Json.parse(Json.write(v)))

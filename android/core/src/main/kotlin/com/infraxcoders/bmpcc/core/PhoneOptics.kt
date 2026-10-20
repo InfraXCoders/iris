@@ -11,11 +11,17 @@ import kotlin.math.min
  */
 object PhoneOptics {
     /** Where an angle of view came from. */
-    enum class Source(val label: String) {
-        INTRINSIC("Auto-calibrated (lens calibration data)"),
-        SENSOR("Auto-calibrated (sensor size and focal length)"),
-        MANUAL("Calibrated by you"),
-        ASSUMED("Assumed 70° (the phone reports nothing usable)"),
+    /**
+     * Where the phone's angle of view comes from. Only a measurement by the user ([MANUAL]) is a calibration; the
+     * phone's own data gives approximate framing (a few percent off on many phones), an assumed angle more so.
+     */
+    enum class Source(val label: String, val short: String) {
+        INTRINSIC("Approximate: from the phone's lens data (calibrate for accurate framing)", "Approximate"),
+        SENSOR("Approximate: from the phone's sensor size and focal length (calibrate for accurate framing)", "Approximate"),
+        MANUAL("Calibrated by you", "Calibrated"),
+        ASSUMED("Approximate: assumed 70° (the phone reports nothing usable; calibrate)", "Approx. 70° assumed"),
+        ;
+        val calibrated: Boolean get() = this == MANUAL
     }
 
     const val DEFAULT_FOV = 70.0

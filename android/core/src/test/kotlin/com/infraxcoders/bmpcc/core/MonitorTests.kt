@@ -76,6 +76,59 @@ class MonitorTest {
         assertTrue(l.frame.width <= area.width + 0.01 && l.frame.height <= area.height + 0.01)
     }
 
+    @Test fun wideFramesShowThePictureInside() {
+        // Cadrage-style: a frame wider than the phone sees fits the screen, with the camera picture smaller inside it.
+        val cam = Catalog.camera("bmpcc_6k_pro")!!
+        val zoomLens = Catalog.lens(QuickRecce.GENERIC_ZOOM_ID)!!
+        for (portrait in listOf(true, false)) for (aspect in listOf(1.78, 2.39, 1.33)) for (focal in listOf(12.0, 14.0, 24.0, 50.0, 135.0)) {
+            val (sw, sh) = if (portrait) 1080.0 to 2340.0 else 2340.0 to 1080.0
+            val video = Monitor.aspectFill(if (portrait) 3.0 / 4.0 else 4.0 / 3.0, sw, sh)
+            val area = if (portrait) Monitor.centredArea(sw, sh, 4.0, 500.0) else Monitor.centredArea(sw, sh, 8.0, 8.0)
+            // A phone whose widest lens sees 77 degrees across the long side, zoom 1..10.
+            val view = PreviewView.fromFormat(77.0, 4.0 / 3.0, portrait)
+            val ref = Framing.reference(cam, zoomLens, focal, aspect)!!
+            val l = Monitor.layout(ref, view, video, area, 1.0, 10.0)
+            val what = "${focal}mm $aspect ${if (portrait) "portrait" else "landscape"}"
+            // 1. The frame always fits the screen area, with its true shape.
+            assertTrue(what, l.frame.x >= area.x - 0.01 && l.frame.y >= area.y - 0.01)
+            assertTrue(what, l.frame.x + l.frame.width <= area.x + area.width + 0.01 && l.frame.y + l.frame.height <= area.y + area.height + 0.01)
+            assertEquals(what, ref.deliveredAspect, l.frame.width / l.frame.height, 0.01)
+            if (l.lines.fits) {
+                assertEquals(what, null, l.picture)
+                assertEquals(what, 1.0 to 1.0, l.coverage)
+            } else {
+                // 2. The picture is centred in the frame, at the phone's widest zoom, its true size relative to the frame.
+                val p = l.picture!!
+                assertEquals(what, 1.0, l.zoom, 1e-9)
+                assertEquals(what, l.frame.midX, p.midX, 1e-6); assertEquals(what, l.frame.midY, p.midY, 1e-6)
+                assertEquals(what, Optics.halfTan(view.horizontalFov) / ref.tanHalfH, p.width / l.frame.width, 1e-6)
+                assertEquals(what, Optics.halfTan(view.verticalFov) / ref.tanHalfV, p.height / l.frame.height, 1e-6)
+                // The picture keeps the camera's shape and is narrower than the frame on at least one axis.
+                assertEquals(what, if (portrait) 0.75 else 4.0 / 3.0, p.width / p.height, 1e-6)
+                // Either the phone can't see all of the frame (dark area), or the picture is just drawn smaller so the
+                // whole frame fits on screen (e.g. 24mm on a portrait screen with its control bars).
+                assertTrue(what, l.coverage.first < 1 || l.coverage.second < 1 || p.width < video.width)
+                // 3. Saved with a photo, the frame keeps its true size around the photo; centred either way.
+                val f = Monitor.frameInPicture(l.frame, p)
+                if (l.coverage.first < 1 || l.coverage.second < 1) assertTrue(what, f.width > 1 + 1e-9 || f.height > 1 + 1e-9)
+                val c = ReferenceCanvas.of(f.x, f.y, f.width, f.height)
+                assertEquals(what, 0.5, c.photo.midX, 1e-6); assertEquals(what, 0.5, c.photo.midY, 1e-6)
+                assertEquals(what, 0.5, c.frame!!.midX, 1e-6); assertEquals(what, 0.5, c.frame!!.midY, 1e-6)
+            }
+        }
+        // 12mm and 14mm on the Pocket 6K Pro are wider than this phone; 50 and 135 fit.
+        val v = PreviewView.fromFormat(77.0, 4.0 / 3.0, false)
+        val video = Monitor.aspectFill(4.0 / 3.0, 2340.0, 1080.0); val area = Monitor.centredArea(2340.0, 1080.0, 8.0, 8.0)
+        assertTrue(Monitor.layout(Framing.reference(cam, zoomLens, 12.0, 2.39)!!, v, video, area, 1.0, 10.0).picture != null)
+        assertTrue(Monitor.layout(Framing.reference(cam, zoomLens, 14.0, 1.78)!!, v, video, area, 1.0, 10.0).picture != null)
+        assertTrue(Monitor.layout(Framing.reference(cam, zoomLens, 50.0, 2.39)!!, v, video, area, 1.0, 10.0).picture == null)
+        assertTrue(Monitor.layout(Framing.reference(cam, zoomLens, 135.0, 2.39)!!, v, video, area, 1.0, 10.0).picture == null)
+        // A normal frame inside the photo stays as it was.
+        val inside = ReferenceCanvas.of(0.1, 0.2, 0.8, 0.5)
+        assertEquals(1.0, inside.widthInPhotos, 1e-9); assertEquals(0.1, inside.frame!!.x, 1e-9)
+        assertEquals(null, ReferenceCanvas.of(null, null, null, null).frame)
+    }
+
     @Test fun calibration() {
         // A 1 m wide object at 2 m covering half the picture: tan(half) = 0.25 / 0.5 = 0.5 -> 53.13 degrees.
         assertEquals(53.13, Calibration.fovFromMeasurement(1.0, 2.0, 0.5)!!, 0.01)

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.MyLocation
@@ -132,7 +133,8 @@ fun HomeScreen(nav: Navigator) {
             highlighted = true,
         ) { nav.push(if (connected) Dest.Shoot else Dest.Connect) }
         Spacer(Modifier.height(14.dp))
-        ModeCard(Icons.Filled.CropFree, "Recce mode", "Pick a camera and lens, then frame shots on location.") { nav.push(Dest.RecceStart) }
+        ModeCard(Icons.Filled.CropFree, "Recce mode", "Live camera with your cinema camera's frame lines. Change camera, lens and frame on screen.") { nav.push(Dest.RecceStart) }
+        // The last recce, right under Recce mode.
         if (recent != null) {
             val frames = recent.scenes.sumOf { sc -> sc.shots.sumOf { it.references.size } }
             Text(
@@ -140,7 +142,8 @@ fun HomeScreen(nav: Navigator) {
                 color = Color(0xFFD5DDF0), fontSize = 12.sp, textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().clickable { nav.push(Dest.Session(recent.id)) }.padding(vertical = 10.dp),
             )
-        }
+        } else Spacer(Modifier.height(14.dp))
+        ModeCard(Icons.Filled.WbSunny, "Sun planner", "Where the sun and shadows fall at any time, on the live camera too.") { nav.push(Dest.Sun()) }
         Spacer(Modifier.height(36.dp))
         Text("LIBRARY & TOOLS", color = Brand.muted, fontSize = 11.sp, letterSpacing = 1.5.sp, fontFamily = FontFamily.Monospace)
         Spacer(Modifier.height(10.dp))
@@ -151,7 +154,6 @@ fun HomeScreen(nav: Navigator) {
             ToolLink("Lenses · ${Catalog.lenses.size}") { nav.push(Dest.Library(LibraryTab.LENSES)) }
             ToolLink("Cameras · ${Catalog.cameras.size}") { nav.push(Dest.Library(LibraryTab.CAMERAS)) }
             ToolLink("Lens coverage") { nav.push(Dest.Coverage()) }
-            ToolLink("Sun planner") { nav.push(Dest.Sun()) }
             ToolLink("LUTs · ${LutStore.entries.size}") { nav.push(Dest.Luts) }
             ToolLink(if (Settings.fovCalibration != null) "Phone calibrated ✓" else "Calibrate phone") { nav.push(Dest.Calibrate()) }
         }
@@ -210,7 +212,7 @@ fun RecceListScreen(nav: Navigator) {
     }) { pad ->
         LazyColumn(contentPadding = pad) {
             item {
-                ActionRow(Icons.Filled.CenterFocusStrong, "Quick recce", "Pick camera, lens and frame, then open the viewfinder", Brand.accentText) {
+                ActionRow(Icons.Filled.CenterFocusStrong, "Quick recce", "Open the live viewfinder with your last camera, lens and frame", Brand.accentText) {
                     nav.push(Dest.RecceStart)
                 }
             }
