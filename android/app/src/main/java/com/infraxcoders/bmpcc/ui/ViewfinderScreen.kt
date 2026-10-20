@@ -178,6 +178,9 @@ import androidx.compose.runtime.derivedStateOf
 import com.infraxcoders.bmpcc.platform.Locator
 import com.infraxcoders.bmpcc.core.SunPlan
 import com.infraxcoders.bmpcc.core.Solar
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.rememberDatePickerState
 import com.infraxcoders.bmpcc.core.PreviewView as PhoneView
 
 /** The phone's back camera: its field of view, zoom range and controls. */
@@ -409,6 +412,8 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
     var sunTime by remember(shotId) { mutableStateOf(shot.plannedTime ?: System.currentTimeMillis()) }
     var sunFix by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var sunStatus by remember { mutableStateOf<String?>(null) }
+    var sunMessage by remember { mutableStateOf<String?>(null) }
+    var sunPickDate by remember { mutableStateOf(false) }
     val sunAsker = rememberPermissionAsker { sunStatus = "Location access is off. Allow it to place the sun (it depends on where you are)." }
     fun toggleSun() {
         if (sunOn) { sunOn = false; return }
@@ -613,13 +618,37 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
                 val dayStart = SunPlan.dayBounds(sunTime, zone).first
                 val path = remember(sunLat, sunLon, dayStart) { SunPlan.path(sunTime, sunLat, sunLon, zone, 10) }
                 SkyOverlay(pose, shown, view, phone.zoom, path, sunTime, sunLat, sunLon, session?.skyline ?: emptyList())
+                // The camera's aim (centre of the camera picture): what "Align on the sun" measures.
+                Canvas(Modifier.fillMaxSize()) {
+                    val c = Offset(shown.midX.toFloat(), shown.midY.toFloat()); val r = 10.dp.toPx()
+                    drawCircle(Color(0xFFFFD27A), r, c, style = Stroke(1.5.dp.toPx()))
+                    drawLine(Color(0xFFFFD27A), c - Offset(r * 1.8f, 0f), c + Offset(r * 1.8f, 0f), 1.dp.toPx())
+                    drawLine(Color(0xFFFFD27A), c - Offset(0f, r * 1.8f), c + Offset(0f, r * 1.8f), 1.dp.toPx())
+                }
+            }
+            // Compass correction: aim the centre mark at the real sun and tap Align (shared with the sun camera view).
+            fun alignOnSun() {
+                val p = pose?.value
+                if (p == null || sunLat == null || sunLon == null) { sunMessage = "No compass reading yet."; return }
+                val real = Solar.position(System.currentTimeMillis(), sunLat, sunLon)
+                if (real.elevation <= 0) { sunMessage = "The sun is below the horizon now: nothing to align on."; return }
+                val az = SunPlan.direction(p.forward).first
+                val fix = SunPlan.azimuthDifference(real.azimuth, az)
+                CompassCorrection.offset = SunPlan.azimuthDifference(CompassCorrection.offset + fix, 0.0)
+                sunMessage = fmt("Compass corrected by %+.0f°.", fix)
             }
             SunStrip(
-                sunTime, sunLat, sunLon, if (known) null else sunStatus, pose, compass,
+                sunTime, sunLat, sunLon, if (known) null else sunStatus, pose, compass, sunMessage, CompassCorrection.offset,
                 if (landscape) Modifier.align(Alignment.BottomCenter).padding(start = 70.dp, end = 100.dp, bottom = 56.dp)
-                else Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = 60.dp, end = 60.dp, bottom = 236.dp),
-                onTime = { sunTime = it }, onClose = { sunOn = false },
+                else Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = 50.dp, end = 50.dp, bottom = 236.dp),
+                onTime = { sunTime = it },
+                onDay = { days -> sunTime = java.time.Instant.ofEpochMilli(sunTime).atZone(java.time.ZoneId.systemDefault()).plusDays(days.toLong()).toInstant().toEpochMilli() },
+                onPickDate = { sunPickDate = true },
+                onAlign = { alignOnSun() },
+                onNudge = { d -> CompassCorrection.offset = if (d == 0.0) 0.0 else CompassCorrection.offset + d; sunMessage = null },
+                onClose = { sunOn = false; sunMessage = null },
             )
+            if (sunPickDate) SunDateDialog(sunTime, onPick = { sunTime = it; sunPickDate = false }, onDismiss = { sunPickDate = false })
         }
 
         if (scopeKind != ScopeKind.NONE && hasCamera && Settings.showScope) ScopePanel(
@@ -839,7 +868,7 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
                     },
             )
         }
-        val thumb: @Composable () -> Unit = { Thumbnail(shot.references.lastOrNull()) { nav.push(Dest.Shot(sessionId, sceneId, shotId)) } }
+        val thumb: @Composable () -> Unit = { Thumbnail(shot.references.lastOrNull(), shot) { nav.push(Dest.Shot(sessionId, sceneId, shotId)) } }
 
         if (landscape) {
             // ── Landscape: tools left, photo / capture / setup right, W M C and focal lengths along the bottom ──
@@ -1050,9 +1079,11 @@ private fun FocalDialog(lens: LensProfile, current: Double, onDismiss: () -> Uni
 
 /** Last saved frame of this shot (tap to open the shot). */
 @Composable
-private fun Thumbnail(ref: ShotReference?, onClick: () -> Unit) {
-    val bmp by produceState<Bitmap?>(null, ref?.filePath) {
-        value = ref?.let { r -> withContext(Dispatchers.IO) { Images.load(File(RecceStore.referencesDir, r.fileName), 240) } }
+private fun Thumbnail(ref: ShotReference?, shot: RecceShot, onClick: () -> Unit) {
+    // The last photo cut to the shot's frame (for its current settings).
+    val frame = ref?.let { com.infraxcoders.bmpcc.core.ReferenceCrop.forShot(it, shot).frame }
+    val bmp by produceState<Bitmap?>(null, ref?.filePath, frame) {
+        value = ref?.let { r -> withContext(Dispatchers.IO) { com.infraxcoders.bmpcc.platform.ReferenceImages.cropped(r, shot, 240)?.bitmap } }
     }
     Box(
         Modifier.size(46.dp).clip(RoundedCornerShape(9.dp))
@@ -1551,17 +1582,20 @@ fun markerColor(t: MarkerType): Color = when (t) {
 }
 
 /**
- * The Sun toggle's strip: the time (slider over the day), where the sun is, where shadows fall, and what's missing
- * (location, rotation sensor, compass calibration).
+ * The Sun toggle's strip: the date (step or pick) and time (slider over the day), where the sun is, where shadows
+ * fall, the compass correction (align on the real sun, nudge), and what's missing (location, rotation sensor,
+ * compass calibration).
  */
 @Composable
 private fun SunStrip(
     time: Long, lat: Double?, lon: Double?, status: String?, pose: State<CameraPose?>?, compass: State<Int?>?,
-    modifier: Modifier, onTime: (Long) -> Unit, onClose: () -> Unit,
+    message: String?, offset: Double, modifier: Modifier,
+    onTime: (Long) -> Unit, onDay: (Int) -> Unit, onPickDate: () -> Unit, onAlign: () -> Unit, onNudge: (Double) -> Unit, onClose: () -> Unit,
 ) {
     val hasPose by remember(pose) { derivedStateOf { pose?.value != null } }
     val poorCompass = compass?.value.let { it == SensorManager.SENSOR_STATUS_UNRELIABLE || it == SensorManager.SENSOR_STATUS_ACCURACY_LOW }
-    Column(modifier.widthIn(max = 460.dp).background(Color(0xD90B1E45), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+    val zone = java.time.ZoneId.systemDefault()
+    Column(modifier.widthIn(max = 480.dp).background(Color(0xD90B1E45), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             val line = if (lat != null && lon != null) {
                 val p = Solar.position(time, lat, lon)
@@ -1572,21 +1606,64 @@ private fun SunStrip(
             Text("✕", color = Color.White, fontSize = 16.sp, modifier = Modifier.clickable(onClick = onClose).padding(start = 10.dp, top = 2.dp, bottom = 2.dp))
         }
         if (lat != null && lon != null) {
-            val zone = java.time.ZoneId.systemDefault()
+            // Date: previous / pick / next day.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("‹", color = Color.White, fontSize = 18.sp, modifier = Modifier.clickable { onDay(-1) }.padding(horizontal = 10.dp))
+                Text(
+                    java.time.Instant.ofEpochMilli(time).atZone(zone).format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM yyyy", java.util.Locale.getDefault())),
+                    color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable(onClick = onPickDate).padding(horizontal = 6.dp, vertical = 4.dp),
+                )
+                Text("›", color = Color.White, fontSize = 18.sp, modifier = Modifier.clickable { onDay(1) }.padding(horizontal = 10.dp))
+            }
             val (start, end) = SunPlan.dayBounds(time, zone)
             val last = ((end - start) / 60_000 - 1).toFloat()
             Slider(
                 ((time - start) / 60_000).toFloat().coerceIn(0f, last), { onTime(start + it.toLong() * 60_000) }, valueRange = 0f..last,
                 colors = SliderDefaults.colors(thumbColor = Color(0xFFFFD27A), activeTrackColor = Color(0xFFFFB347)),
             )
+            // Compass correction.
+            if (hasPose) Row(
+                Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Pill("Align on the sun", color = Brand.light) { onAlign() }
+                Pill("−1°", color = Brand.lightChip) { onNudge(-1.0) }
+                Pill("+1°", color = Brand.lightChip) { onNudge(1.0) }
+                if (offset != 0.0) Pill(fmt("%+.0f° · reset", offset), color = Brand.lightChip) { onNudge(0.0) }
+            }
             val note = when {
+                message != null -> message
                 !hasPose -> "Waiting for the rotation sensor (some phones have none: then the sun can't be placed on the picture)."
                 poorCompass -> "Compass needs calibrating: move the phone in a figure-8 a few times, away from metal and cars."
-                else -> "Approximate (phone compass). If it's off from the real sun, correct it in Sun planner › camera view › Align on the sun."
+                else -> "Approximate (phone compass). If the drawn sun is off, aim the centre mark at the real sun and tap Align on the sun."
             }
-            Text(note, color = if (poorCompass) Color(0xFFFFB347) else Color(0xFFD5DDF0), fontSize = 10.sp, maxLines = 2)
+            Text(note, color = if (poorCompass && message == null) Color(0xFFFFB347) else Color(0xFFD5DDF0), fontSize = 10.sp, maxLines = 2,
+                modifier = Modifier.padding(top = 4.dp))
         }
     }
+}
+
+/** Picks the Sun toggle's date, keeping the time of day. */
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SunDateDialog(time: Long, onPick: (Long) -> Unit, onDismiss: () -> Unit) {
+    val zone = java.time.ZoneId.systemDefault()
+    val now = java.time.Instant.ofEpochMilli(time).atZone(zone)
+    val state = rememberDatePickerState(initialSelectedDateMillis = now.toLocalDate().atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli())
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton({
+                val utc = state.selectedDateMillis
+                if (utc == null) onDismiss() else {
+                    val date = java.time.Instant.ofEpochMilli(utc).atZone(java.time.ZoneOffset.UTC).toLocalDate()
+                    onPick(date.atTime(now.toLocalTime()).atZone(zone).toInstant().toEpochMilli())
+                }
+            }) { Text("OK") }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    ) { DatePicker(state) }
 }
 
 /** Captures a photo of the whole camera picture and remembers where the cinema frame was in it. */

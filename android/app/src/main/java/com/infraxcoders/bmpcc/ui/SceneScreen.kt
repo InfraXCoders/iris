@@ -106,10 +106,18 @@ fun SceneScreen(nav: Navigator, sessionId: String, sceneId: String) {
 @Composable
 fun ShotRow(shot: RecceShot, onOpen: () -> Unit, onFinder: () -> Unit, onDelete: () -> Unit) {
     val first = shot.references.minByOrNull { it.timestamp }
-    val bmp = first?.let { Images.load(File(RecceStore.referencesDir, it.fileName), 320) }
+    // The first photo cut to the shot's frame for its current settings (whole frame shown, dark around if needed).
+    val frame = first?.let { com.infraxcoders.bmpcc.core.ReferenceCrop.forShot(it, shot).frame }
+    val bmp by androidx.compose.runtime.produceState<android.graphics.Bitmap?>(null, first?.filePath, frame) {
+        value = first?.let { r -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.infraxcoders.bmpcc.platform.ReferenceImages.cropped(r, shot, 320)?.bitmap } }
+    }
     Row(Modifier.cardRow().clickable(onClick = onOpen).padding(start = 16.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(64.dp, 40.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF22407F)), contentAlignment = Alignment.Center) {
-            if (bmp != null) Image(bmp.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.size(64.dp, 40.dp))
+        val b = bmp
+        Box(
+            Modifier.size(64.dp, 40.dp).clip(RoundedCornerShape(4.dp)).background(if (b != null) Color(0xFF0C0E14) else Color(0xFF22407F)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (b != null) Image(b.asImageBitmap(), null, contentScale = ContentScale.Fit, modifier = Modifier.size(64.dp, 40.dp))
             else Icon(Icons.Filled.PhotoCamera, null, tint = Color.Gray)
         }
         Spacer(Modifier.width(12.dp))
