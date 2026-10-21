@@ -82,7 +82,7 @@ object ReportPdf {
         // Measure every card (picture shape from the photo's size, text by layout) so cards are never split.
         val cards = rows.map { (scene, shot) ->
             val notes = s.sortedNotes.filter { n -> n.shotId == shot.id }
-            val ref = shot.references.minByOrNull { it.timestamp }
+            val ref = ReferenceCrop.bestReference(shot)
             val size = ref?.let { ReferenceImages.photoSize(it) }
             val crop = if (ref != null && size != null) ReferenceCrop.forShot(ref, shot) else null
             val image = if (crop != null && size != null) ShotListLayout.fit(crop.aspect(size.first, size.second), IMG_W.toDouble(), IMG_H.toDouble()) else null

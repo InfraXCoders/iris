@@ -109,6 +109,28 @@ class ReferenceCropTest {
         assertEquals(ReferenceCrop.Basis.NO_FRAME, ReferenceCrop.forShot(old.copy(frameHeight = 0.0), sh).basis)
     }
 
+    @Test fun bestPhotoForTheShot() {
+        val phone = Phone(false)
+        val at18 = capture(shot(18, "16:9"), phone).first.copy(id = "a", timestamp = 1000)
+        val at35 = capture(shot(35, "16:9"), phone).first.copy(id = "b", timestamp = 2000)
+        val at135 = capture(shot(135, "16:9"), phone).first.copy(id = "c", timestamp = 3000)
+        val all = listOf(at18, at35, at135)
+        // A photo taken at the current framing wins, even if it isn't the newest.
+        assertEquals("b", ReferenceCrop.bestReference(shot(35, "16:9").copy(references = all))!!.id)
+        assertEquals("a", ReferenceCrop.bestReference(shot(18, "16:9").copy(references = all))!!.id)
+        // The newest of several at the current framing.
+        val at35later = at35.copy(id = "d", timestamp = 4000)
+        assertEquals("d", ReferenceCrop.bestReference(shot(35, "16:9").copy(references = all + at35later))!!.id)
+        // None at the current framing (aspect changed): the newest photo.
+        assertEquals("c", ReferenceCrop.bestReference(shot(35, "1.85:1").copy(references = all))!!.id)
+        // Older photos without capture settings: the newest.
+        val old1 = ShotReference(id = "o1", filePath = "1.jpg", timestamp = 10, frameX = 0.1, frameY = 0.1, frameWidth = 0.8, frameHeight = 0.45)
+        val old2 = old1.copy(id = "o2", filePath = "2.jpg", timestamp = 20)
+        assertEquals("o2", ReferenceCrop.bestReference(shot(35, "16:9").copy(references = listOf(old1, old2)))!!.id)
+        // No photos: none (nothing is made up).
+        assertNull(ReferenceCrop.bestReference(shot(35, "16:9")))
+    }
+
     @Test fun pixelPlanInsideThePhoto() {
         // A 2.39-ish crop inside a 4000x3000 photo: no padding, the output is exactly the photo pixels, scaled down.
         val crop = ScreenRect(0.1, 0.3, 0.8, 0.8 * 4000 / 3000 / 2.39 * 0.75)

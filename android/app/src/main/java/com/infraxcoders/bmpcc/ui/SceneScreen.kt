@@ -105,8 +105,8 @@ fun SceneScreen(nav: Navigator, sessionId: String, sceneId: String) {
 
 @Composable
 fun ShotRow(shot: RecceShot, onOpen: () -> Unit, onFinder: () -> Unit, onDelete: () -> Unit) {
-    val first = shot.references.minByOrNull { it.timestamp }
-    // The first photo cut to the shot's frame for its current settings (whole frame shown, dark around if needed).
+    val first = com.infraxcoders.bmpcc.core.ReferenceCrop.bestReference(shot)
+    // The shot's photo (taken at its current framing if there is one, else the newest) cut to the shot's frame for its current settings (whole frame shown, dark around if needed).
     val frame = first?.let { com.infraxcoders.bmpcc.core.ReferenceCrop.forShot(it, shot).frame }
     val bmp by androidx.compose.runtime.produceState<android.graphics.Bitmap?>(null, first?.filePath, frame) {
         value = first?.let { r -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.infraxcoders.bmpcc.platform.ReferenceImages.cropped(r, shot, 320)?.bitmap } }

@@ -868,7 +868,7 @@ fun ViewfinderScreen(nav: Navigator, sessionId: String, sceneId: String, shotId:
                     },
             )
         }
-        val thumb: @Composable () -> Unit = { Thumbnail(shot.references.lastOrNull(), shot) { nav.push(Dest.Shot(sessionId, sceneId, shotId)) } }
+        val thumb: @Composable () -> Unit = { Thumbnail(com.infraxcoders.bmpcc.core.ReferenceCrop.bestReference(shot), shot) { nav.push(Dest.Shot(sessionId, sceneId, shotId)) } }
 
         if (landscape) {
             // ── Landscape: tools left, photo / capture / setup right, W M C and focal lengths along the bottom ──

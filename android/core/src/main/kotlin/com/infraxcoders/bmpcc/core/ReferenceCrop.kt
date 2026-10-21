@@ -56,6 +56,18 @@ object ReferenceCrop {
         return Result(rescale(saved, then, now), if (same(then, now)) Basis.CAPTURED else Basis.RECALCULATED)
     }
 
+    /**
+     * The photo to show for [shot] (shot screen thumbnails, viewfinder, PDF): the newest one taken at the shot's current
+     * framing (same cinema angle of view and shape, so it is exactly framed and at full sharpness), otherwise the newest.
+     * null when the shot has no photos.
+     */
+    fun bestReference(shot: RecceShot): ShotReference? {
+        val newestFirst = shot.references.sortedByDescending { it.timestamp }
+        val now = shot.reference ?: return newestFirst.firstOrNull()
+        return newestFirst.firstOrNull { r -> savedFrame(r) != null && captureReference(r)?.let { same(it, now) } == true }
+            ?: newestFirst.firstOrNull()
+    }
+
     /** The saved frame, if it is complete and usable. */
     fun savedFrame(r: ShotReference): ScreenRect? {
         val x = r.frameX; val y = r.frameY; val w = r.frameWidth; val h = r.frameHeight
